@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>R7_V3 - Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    .card { border: 1px solid #ddd; padding: 1rem; border-radius: 6px; max-width: 480px }
+    h1 { margin-top: 0 }
+    .metric { font-size: 1.25rem; margin: 0.5rem 0 }
+    .bar { height: 18px; background: #eee; border-radius: 9px; overflow: hidden }
+    .bar > div { height: 100%; background: #4caf50; width: 0% }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>R7_V3 Dashboard</h1>
+    <p class="metric"><strong>Saldo Atual:</strong> <span id="saldo-atual">Carregando...</span></p>
+    <p class="metric"><strong>Meta Diária:</strong> <span id="meta">17.43 USDT</span></p>
+    <p class="metric"><strong>Lucro Acumulado (Hoje):</strong> <span id="lucro-acumulado">0.00 USDT</span></p>
+    <div class="metric">
+      <div class="bar" aria-hidden>
+        <div id="progress" style="width:0%"></div>
+      </div>
+      <small id="progress_text"></small>
+    </div>
+    <p style="margin-top:1rem"><small>Dados carregados de <code>data/daily_state.json</code></small></p>
+  </div>
+
+<script>
+async function updateState(){
+  try{
+    const r = await fetch('data/daily_state.json?t=' + Date.now());
+    if(!r.ok) throw new Error('fetch failed');
+    const j = await r.json();
+    const saldoAtual = Number(j.usdt_operacional || j.spot_usdt || 0);
+    const saldoInicial = Number(j.saldo_inicial_usdt || j.usdt_operacional || 0);
+    const lucro = Number((saldoAtual - saldoInicial) || 0);
+    const meta = Number(j.meta_diaria_usdt || 17.43);
+
+    document.getElementById('saldo-atual').innerText = `${saldoAtual.toFixed(2)} USDT`;
+    document.getElementById('lucro-acumulado').innerText = `${lucro.toFixed(2)} USDT`;
+    document.getElementById('meta').innerText = `${meta.toFixed(2)} USDT`;
+
+    const pct = meta>0? Math.max(0, Math.min(100, (lucro/meta)*100)) : 0;
+    document.getElementById('progress').style.width = pct + '%';
+    document.getElementById('progress_text').innerText = `${lucro.toFixed(2)} / ${meta.toFixed(2)} USDT (${pct.toFixed(1)}%)`;
+  }catch(e){
+    console.warn('Falha ao atualizar dashboard:', e);
+  }
+}
+// First load
+updateState();
+// Auto-refresh every 5 seconds
+setInterval(updateState, 5000);
+</script>
+</body>
+</html>

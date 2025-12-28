@@ -1,0 +1,14 @@
+Set objShell = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+base = fso.GetParentFolderName(WScript.ScriptFullName)
+
+' Require explicit opt-in file to avoid unwanted autostart
+If Not fso.FileExists(base & "\ENABLE_AUTOSTART") Then
+  ' Autostart not enabled; exit silently
+  WScript.Quit
+End If
+
+script = base & "\\tools\\start_keep_alive.py"
+cmd = """C:\\Users\\mlisb\\AppData\\Local\\Programs\\Python\\Python312\\pythonw.exe"" """ & script & """
+On Error Resume Next
+objShell.Run cmd, 0, False

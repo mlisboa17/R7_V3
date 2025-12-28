@@ -1,0 +1,7 @@
+@echo off
+REM Wrapper runs run_forever.vbs only if ENABLE_AUTOSTART exists in project root
+if exist "%~dp0..\ENABLE_AUTOSTART" (
+  "%SystemRoot%\\System32\\wscript.exe" "%~dp0..\run_forever.vbs"
+) else (
+  echo Autostart disabled; create "%~dp0..\ENABLE_AUTOSTART" to enable.
+)

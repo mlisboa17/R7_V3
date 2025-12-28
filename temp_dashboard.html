@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>R7_V3 Dashboard</title>
+  <style>
+    :root{--bg:#061018;--panel:#0c1620;--muted:#9aa5b1;--accent:#00e1a6;--accent2:#7ef08d;--warn:#ff9f43}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:#e6eef3}
+    .wrap{max-width:1050px;margin:18px auto;padding:18px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{font-size:18px;margin:0}
+    .meta{color:var(--muted);font-size:13px}
+
+    .grid{display:grid;grid-template-columns:1fr 320px;gap:16px;margin-top:14px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));border-radius:10px;padding:16px;border:1px solid rgba(255,255,255,0.03)}
+
+    .metric{display:flex;justify-content:space-between;align-items:center;margin:10px 0}
+    .metric .label{color:var(--muted);font-size:13px}
+    .metric .value{font-weight:700;font-size:18px}
+    .value.profit{color:var(--accent)}
+
+    #progress{width:100%;background:#071623;border-radius:10px;height:18px;overflow:hidden;border:1px solid rgba(255,255,255,0.03)}
+    #progress > div{height:100%;width:0%;background:var(--warn);transition:width 400ms ease, background 400ms ease}
+    #progress_text{margin-top:10px;color:var(--muted);font-size:13px}
+
+    pre{background:#071018;color:#9ef7d3;padding:12px;border-radius:8px;overflow:auto;max-height:260px}
+    .small{font-size:12px;color:var(--muted)}
+    .status-pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#052826;color:var(--accent);font-weight:600}
+
+    footer{margin-top:16px;color:var(--muted);font-size:12px}
+
+    @media(max-width:880px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>R7_V3 — Painel</h1>
+        <div class="meta">Resumo em tempo real • Atualiza automaticamente</div>
+      </div>
+      <div class="status-pill" id="bot_status">CARREGANDO</div>
+    </header>
+
+    <div class="grid">
+      <div>
+        <div class="card" style="text-align:center">
+          <h3>Saldo Total da Conta</h3>
+          <div id="saldo_total" style="font-size:36px;font-weight:700;margin:18px 0">R$ —</div>
+          <div class="small" id="saldo_note">Última atualização: <span id="last_update_small">—</span></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Métrica Diária</h3>
+          <p class="small">Saldo inicial do dia: <strong id="daily_saldo_inicial">R$ —</strong></p>
+          <p class="small">Meta diária (BRL): <strong id="daily_meta">R$ —</strong> &nbsp;(<span id="daily_meta_usd">— USD</span>)</p>
+          <div id="daily_progress" style="margin-top:8px">
+            <div id="daily_progress_bar" style="width:0%;background:var(--accent2);height:14px;border-radius:8px"></div>
+            <div id="daily_progress_text" class="small" style="margin-top:6px">Progresso: —%</div>
+          </div>
+          <p class="small">Valor para atingir a meta: <strong id="daily_to_target">R$ —</strong></p>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Logs Recentes</h3>
+          <pre id="logs">Carregando...</pre>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>Detalhes Rápidos</h3>
+          <p class="small">Meta diária: <strong id="meta_brl">R$ 99,09</strong> &nbsp;(<span id="meta_usd">— USD</span>)</p>
+          <p class="small">Super meta (150%): <strong id="super_brl">R$ 148,63</strong> &nbsp;(<span id="super_usd">— USD</span>)</p>
+          <div class="metric"><div class="label">Trades hoje</div><div class="value" id="trades_today">—</div></div>
+          <div class="metric"><div class="label">Saldo Operacional (USDT)</div><div class="value" id="usdt_operacional">—</div></div>
+          <div style="margin-top:8px" class="small">Última atualização: <span id="last_update">—</span></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Métrica Mensal</h3>
+          <p class="small">Saldo início mês: <strong id="month_saldo_inicio">R$ —</strong></p>
+          <p class="small">Meta mês (completa): <strong id="month_meta">R$ —</strong> &nbsp;(<span id="month_meta_usd">— USD</span>)</p>
+          <div id="month_progress" style="margin-top:8px">
+            <div id="month_progress_bar" style="width:0%;background:var(--warn);height:14px;border-radius:8px"></div>
+            <div id="month_progress_text" class="small" style="margin-top:6px">Progresso: —%</div>
+          </div>
+          <p class="small">Valor acumulado no mês: <strong id="month_acumulado">R$ —</strong></p>
+          <p class="small">Falta para meta: <strong id="month_falta">R$ —</strong></p>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Status</h3>
+          <p id="status_text">Carregando...</p>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div class="small">Abra via <code id="dash_link">http://localhost:8530/dashboard.html</code></div>
+    </footer>
+  </div>
+
+  <script>
+    // Prefer values directly from data/daily_state.json. If missing, fallback to logs/API.
+    async function computeLucroUSDTFromLogs(){
+      try{
+        const res = await fetch('logs/trades.log');
+        if(!res.ok) return 0;
+        const txt = await res.text();
+        const lines = txt.trim().split('\n');
+        let sum=0;
+        for(const ln of lines){
+          const m = ln.match(/pnl_usdt=(-?[0-9\.]+)/);
+          if(m) sum += Number(m[1]);
+        }
+        return sum;
+      }catch(e){return 0}
+    }
+
+    async function getUSDTBRLRate(fallback){
+      try{
+        const r = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL');
+        if(r.ok){const j=await r.json();return Number(j.price)}
+      }catch(e){/*ignore*/}
+      return fallback || 5.5;
+    }
+
+    async function loadState(){
+      try{
+        // Avoid cached responses by adding a timestamp
+        const res = await fetch('data/daily_state.json?t='+Date.now());
+        if(!res.ok) throw new Error('Não foi possível carregar data/daily_state.json');
+        const j = await res.json();
+
+        const meta = Number(j.meta_diaria_brl || 96.53);
+        const saldo_inicial = Number(j.saldo_inicial_brl || j.banca_inicial_brl || 0);
+        const lucro_brl = Number(j.lucro_acumulado_dia_brl || 0);
+        // prefer lucro_usdt field from daily_state if present
+        const lucro_usdt_state = Number(j.lucro_acumulado_usdt || 0);
+        const usdt_oper = Number(j.usdt_operacional || 0);
+        const trades = j.trades_today || 0;
+        const banca = Number(j.banca_inicial_brl || 0);
+
+        // Get lucro_usdt: prefer stored, else compute from logs
+        const lucro_usdt = lucro_usdt_state || await computeLucroUSDTFromLogs();
+
+        // rate: prefer stored last_usdt_brl_rate, else fetch public API
+        const stored_rate = Number(j.last_usdt_brl_rate || j.usdt_rate || 0);
+        const rate = stored_rate > 0 ? stored_rate : await getUSDTBRLRate(stored_rate);
+
+        const lucro_total_brl = lucro_brl + (lucro_usdt * rate);
+
+        // Prefer explicit equity field if available (comes from executor snapshot when possible)
+        const explicit_equity = Number(j.equity_brl || j.saldo_total_brl || 0);
+        // compute total account balance (BRL) using available fields as fallback
+        const fallback_total = (Number(saldo_inicial) || 0) + (Number(lucro_brl) || 0) + ((Number(usdt_oper) || 0) * (rate || 1));
+        const total_brl = explicit_equity > 0 ? explicit_equity : fallback_total;
+
+        // update DOM: show only total balance
+        const totalEl = document.getElementById('saldo_total');
+        if(totalEl) totalEl.innerText = `R$ ${total_brl.toFixed(2)}`;
+        const lastSmall = document.getElementById('last_update_small'); if(lastSmall){
+          const src = j.equity_source ? ` • Fonte: ${j.equity_source}` : '';
+          lastSmall.innerText = `${new Date().toLocaleString()}${src}`;
+        }
+
+        // Also keep lightweight status in the small pane
+        const statusTextEl = document.getElementById('status_text');
+        if(statusTextEl){
+          let status_text = (j.status_meta || 'pendente').toUpperCase();
+          if(j.status_meta === 'atingida') status_text = '✅ Meta batida — buscando extras';
+          if(j.status_meta === 'super_atingida') status_text = '🚀 SUPER META atingida — operações encerradas hoje';
+          if(j.status_meta === 'parada_protecao') status_text = '🛑 Proteção ativada — operações pausadas hoje';
+          statusTextEl.innerText = status_text;
+        }
+
+        document.getElementById('bot_status').innerText = 'ATIVO - MODO REAL';
+        document.getElementById('last_update').innerText = new Date().toLocaleString();
+
+        // Update meta displays (BRL & USD)
+        try{
+          const metaEl = document.getElementById('meta_brl'); if(metaEl) metaEl.innerText = `R$ ${meta.toFixed(2)}`;
+          const metaUsdEl = document.getElementById('meta_usd'); if(metaUsdEl) metaUsdEl.innerText = `${(meta / (rate || 1)).toFixed(2)} USD`;
+          const superEl = document.getElementById('super_brl'); if(superEl) superEl.innerText = `R$ ${(1.5*meta).toFixed(2)}`;
+          const superUsdEl = document.getElementById('super_usd'); if(superUsdEl) superUsdEl.innerText = `${((1.5*meta) / (rate || 1)).toFixed(2)} USD`;
+
+          // show equity source and last update if present for debugging
+          try{
+            const src = j.equity_source || j.equity_source || 'N/A';
+            const lastupd = j.equity_last_updated || j.data || new Date().toISOString();
+            const srcEl = document.getElementById('saldo_note'); if(srcEl) srcEl.innerText = `Última atualização: ${new Date().toLocaleString()} • Fonte: ${src} • Atualizado: ${new Date(lastupd).toLocaleString()}`;
+          }catch(e){/*ignore*/}
+
+          // Daily metrics
+          try{
+            const dailySaldo = Number(j.saldo_inicial_brl || j.banca_inicial_brl || 0);
+            const dailyMeta = Number(j.meta_diaria_brl || meta);
+            const dailyProfit = Number(j.lucro_acumulado_dia_brl || 0);
+            const dailyPct = dailyMeta > 0 ? Math.min(150, (dailyProfit / dailyMeta) * 100) : 0;
+            const dailyToTarget = Math.max(0, dailyMeta - dailyProfit);
+            const dsEl = document.getElementById('daily_saldo_inicial'); if(dsEl) dsEl.innerText = `R$ ${dailySaldo.toFixed(2)}`;
+            const dmEl = document.getElementById('daily_meta'); if(dmEl) dmEl.innerText = `R$ ${dailyMeta.toFixed(2)}`;
+            const dpBar = document.getElementById('daily_progress_bar'); if(dpBar) dpBar.style.width = `${dailyPct}%`;
+            const dpText = document.getElementById('daily_progress_text'); if(dpText) dpText.innerText = `Progresso: ${dailyPct.toFixed(1)}%`;
+            const dtEl = document.getElementById('daily_to_target'); if(dtEl) dtEl.innerText = `R$ ${dailyToTarget.toFixed(2)}`;
+            const dmuEl = document.getElementById('daily_meta_usd'); if(dmuEl) dmuEl.innerText = `${(dailyMeta / (rate || 1)).toFixed(2)} USD`;
+          }catch(e){/*ignore*/}
+
+          // Monthly metrics: compute from data/history.json (sum month-to-date)
+          try{
+            fetch('data/history.json').then(r=>r.ok? r.json(): []).then(hist=>{
+              const now = new Date();
+              const yyyy_mm = now.toISOString().slice(0,7);
+              const monthEntries = (hist || []).filter(e=> e.date && e.date.startsWith(yyyy_mm));
+              let monthAcum = 0;
+              let monthStartSaldo = null;
+              if(monthEntries.length>0){
+                monthStartSaldo = Number(monthEntries[0].saldo_inicial_brl || monthEntries[0].saldo_inicial || 0);
+                monthAcum = monthEntries.reduce((s,e)=> s + (Number(e.lucro_acumulado_dia_brl || 0)), 0);
+              }
+              // include today's profit
+              monthAcum += Number(j.lucro_acumulado_dia_brl || 0);
+              const now = new Date();
+              const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+              // Prefer stored fixed month meta if present, otherwise compute full-month meta from current daily meta
+              const storedMonthTotal = Number(j.month_meta_total || 0);
+              const monthlyTarget = storedMonthTotal > 0 ? storedMonthTotal : ((Number(j.meta_diaria_brl || meta) || 0) * daysInMonth);
+              const monthPct = monthlyTarget > 0 ? Math.min(150, (monthAcum / monthlyTarget)*100) : 0;
+              const monthToTarget = Math.max(0, monthlyTarget - monthAcum);
+              const msEl = document.getElementById('month_saldo_inicio'); if(msEl) msEl.innerText = `R$ ${((j.month_start_balance || monthStartSaldo || j.saldo_inicial_brl || 0)).toFixed(2)}`;
+              const mmEl = document.getElementById('month_meta'); if(mmEl) mmEl.innerText = `R$ ${monthlyTarget.toFixed(2)}`;
+              const mmUsdEl = document.getElementById('month_meta_usd'); if(mmUsdEl) mmUsdEl.innerText = `${(monthlyTarget / (rate || 1)).toFixed(2)} USD`;
+              const mBar = document.getElementById('month_progress_bar'); if(mBar) mBar.style.width = `${monthPct}%`;
+              const mText = document.getElementById('month_progress_text'); if(mText) mText.innerText = `Progresso: ${monthPct.toFixed(1)}%`;
+              const macEl = document.getElementById('month_acumulado'); if(macEl) macEl.innerText = `R$ ${monthAcum.toFixed(2)}`;
+              const mfEl = document.getElementById('month_falta'); if(mfEl) mfEl.innerText = `R$ ${monthToTarget.toFixed(2)}`;
+            }).catch(()=>{/*ignore*/});
+          }catch(e){/*ignore*/}
+
+        }catch(e){/*ignore*/}
+
+        // Update dashboard link from data/config.json if available
+        fetch('data/config.json').then(r=>{ if(r.ok) return r.json(); throw new Error('no cfg') }).then(cfg=>{
+          if(cfg && cfg.dashboard_url){
+            const dashEl = document.getElementById('dash_link');
+            if(dashEl){ dashEl.innerText = cfg.dashboard_url; dashEl.href = cfg.dashboard_url; dashEl.target = '_blank'; }
+          }
+        }).catch(()=>{/*ignore*/});
+
+      }catch(e){
+        document.getElementById('logs').innerText = e.message;
+      }
+    }
+
+    async function loadLogs(){
+      try{
+        const res = await fetch('logs/opportunities.log');
+        if(!res.ok) throw new Error('Não foi possível carregar logs/opportunities.log');
+        const txt = await res.text();
+        const lines = txt.trim().split('\n').slice(-8).reverse().join('\n');
+        document.getElementById('logs').innerText = lines;
+      }catch(e){
+        document.getElementById('logs').innerText = e.message + '\nDica: execute `python -m http.server`';
+      }
+    }
+
+    // Auto-refresh every 30s
+    loadState(); loadLogs();
+    // Refresh state and logs every 30s (no full page reload to preserve UI state)
+    setInterval(()=>{ loadState(); loadLogs(); }, 30*1000);
+    // remove aggressive full page reload; user can Ctrl+F5 if needed
+    // setInterval(()=>{ location.reload(); }, 30*1000);
+  </script>
+</body>
+</html>
