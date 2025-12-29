@@ -77,11 +77,13 @@ def update_account_composition():
         # Salvar saldo mensal
         set_monthly_balance(total_usdt)
         
-        print(f"✅ Composição da conta atualizada com sucesso! Total: ${total_usdt:.2f} USDT")
+        # Corrigir erro de Unicode no Windows removendo emoji
+        print(f"Composição da conta atualizada com sucesso! Total: ${total_usdt:.2f} USDT")
         return composicao
     
     except Exception as e:
-        print(f"❌ Erro ao atualizar composição: {e}")
+        # Corrigir erro de Unicode no Windows removendo emoji
+        print(f"Erro ao atualizar composição: {e}")
         return None
 
 if __name__ == "__main__":

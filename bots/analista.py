@@ -2,6 +2,9 @@ import os
 import logging
 import pandas as pd
 from binance.client import Client
+import sys
+sys.path.append('..')
+from utils.volatility import calculate_volatility
 
 logger = logging.getLogger('analista')
 
@@ -28,10 +31,10 @@ class AnalistaBot:
         df['signal'] = df['macd'].ewm(span=9).mean()
         return df
 
-    async def buscar_oportunidades(self):
-        """Varre as moedas definidas para cada uma das 4 estratégias."""
+
+    async def buscar_oportunidades(self, estrategista=None):
+        """Varre as moedas definidas para cada uma das 4 estratégias, sugerindo sizing/stops dinâmicos se estrategista for fornecido."""
         oportunidades = []
-        # Mapeamento de moedas por estratégia
         regras_moedas = {
             'scalping_v6': ['SOL', 'ADA', 'DOT', 'XRP'],
             'swing_rwa': ['BTC', 'ETH', 'LINK'],
@@ -52,18 +55,28 @@ class AnalistaBot:
                     df = self.calculate_indicators(df)
                     last = df.iloc[-1]
 
-                    # GATILHOS DE SABEDORIA
                     sinal = None
                     if nome_est == 'scalping_v6' and last['rsi'] < 42 and last['close'] > last['ema5']:
                         sinal = self._formatar_sinal(symbol, nome_est, last['close'], 0.45, 0.55)
-                    
                     elif nome_est == 'swing_rwa' and last['close'] > last['ema20'] and last['macd'] > last['signal']:
                         sinal = self._formatar_sinal(symbol, nome_est, last['close'], 2.50, 1.50)
 
-                    if sinal: oportunidades.append(sinal)
+                    # --- MELHORIA: Sizing e stops dinâmicos ---
+                    if sinal and estrategista is not None:
+                        saldo = self.config.get('banca_referencia_usdt', 2020.0)
+                        prices = df['close'].tolist()
+                        # Calcula tamanho da posição e stops dinâmicos
+                        size = estrategista.calcular_position_size(prices, saldo)
+                        stop, alvo = estrategista.definir_stops(last['close'], prices)
+                        sinal['position_size'] = size
+                        sinal['sl'] = stop
+                        sinal['tp'] = alvo
+                        sinal.pop('tp_pct', None)
+                        sinal.pop('sl_pct', None)
+                    if sinal:
+                        oportunidades.append(sinal)
                 except Exception as e:
                     logger.error(f"Erro analisando {symbol}: {e}")
-        
         return oportunidades
 
     def _formatar_sinal(self, symbol, est, preco, tp, sl):

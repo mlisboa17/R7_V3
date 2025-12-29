@@ -4,6 +4,7 @@ import logging
 import math
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
+from utils.binance_retry import retry_api_call
 
 logger = logging.getLogger('executor')
 
@@ -20,7 +21,7 @@ class ExecutorBot:
     def get_symbol_precision(self, symbol):
         """Busca as regras de lot size e tick size da Binance."""
         try:
-            info = self.client.get_symbol_info(symbol)
+            info = retry_api_call(lambda: self.client.get_symbol_info(symbol))
             lot_filter = next((f for f in info.get('filters', []) if f.get('filterType') == 'LOT_SIZE'), None)
             price_filter = next((f for f in info.get('filters', []) if f.get('filterType') == 'PRICE_FILTER'), None)
             def decimals_from_step(step):
@@ -42,7 +43,7 @@ class ExecutorBot:
 
     def get_usdt_brl_rate(self):
         try:
-            t = self.client.get_symbol_ticker(symbol='USDTBRL')
+            t = retry_api_call(lambda: self.client.get_symbol_ticker(symbol='USDTBRL'))
             return float(t.get('price') or 0)
         except Exception as e:
             logger.error('Erro get_usdt_brl_rate: %s', e)
@@ -50,7 +51,7 @@ class ExecutorBot:
 
     def obter_saldo_real_spot(self, guardiao):
         try:
-            acct = self.client.get_account()
+            acct = retry_api_call(lambda: self.client.get_account())
             balances = acct.get('balances', [])
             usdt = next((float(b.get('free') or 0) for b in balances if b.get('asset') == 'USDT'), 0.0)
             return usdt
@@ -72,7 +73,7 @@ class ExecutorBot:
     async def executar_ordem(self, symbol, dados_trade):
         pair = f"{symbol}USDT"
         try:
-            info = self.client.get_symbol_info(pair)
+            info = retry_api_call(lambda: self.client.get_symbol_info(pair))
             lot = next((f for f in info.get('filters', []) if f.get('filterType') == 'LOT_SIZE'), None)
             notional = next((f for f in info.get('filters', []) if f.get('filterType') in ('MIN_NOTIONAL', 'NOTIONAL')), None)
             step = float(lot.get('stepSize', '1')) if lot else 1
@@ -80,12 +81,16 @@ class ExecutorBot:
             min_notional = float(notional.get('minNotional') or 0) if notional else 0
 
             qty_prec, price_prec = self.get_symbol_precision(pair)
-            ticker = self.client.get_symbol_ticker(symbol=pair)
+            ticker = retry_api_call(lambda: self.client.get_symbol_ticker(symbol=pair))
             preco_atual = float(ticker['price'])
-            entrada_usd = float(dados_trade.get('entrada_usd', 100.0))
-            raw_qty = entrada_usd / preco_atual if preco_atual else 0
 
-            # floor to step
+            # --- POSITION SIZING DINÂMICO ---
+            if 'position_size' in dados_trade:
+                raw_qty = float(dados_trade['position_size'])
+            else:
+                entrada_usd = float(dados_trade.get('entrada_usd', 100.0))
+                raw_qty = entrada_usd / preco_atual if preco_atual else 0
+
             quant = math.floor(raw_qty / step) * step
             quantidade = round(quant, qty_prec)
             if quantidade < min_qty:
@@ -95,8 +100,9 @@ class ExecutorBot:
                 logger.warning('Ordem abaixo do min_notional para %s: qty=%s price=%s min_not=%s', pair, quantidade, preco_atual, min_notional)
                 return False
 
+            # --- EXECUÇÃO REAL OU SIMULADA ---
             if self.real_trading:
-                ordem = self.client.order_market_buy(symbol=pair, quantity=str(quantidade))
+                ordem = retry_api_call(lambda: self.client.order_market_buy(symbol=pair, quantity=str(quantidade)))
                 fills = ordem.get('fills') or []
                 filled_qty = sum(float(f.get('qty') or 0) for f in fills)
                 if filled_qty <= 0:
@@ -108,31 +114,45 @@ class ExecutorBot:
                 else:
                     avg_price = float(ordem.get('fills', [{}])[0].get('price') or preco_atual)
 
+                taxa = 0.001
+                preco_compra_com_taxa = avg_price * (1 + taxa)
+
                 if filled_qty > 0:
                     preco_exec = avg_price or preco_atual
-                    tp = round(preco_exec * (1 + float(dados_trade.get('tp_pct', 1))/100), price_prec)
-                    sl = round(preco_exec * (1 - float(dados_trade.get('sl_pct', 1))/100), price_prec)
+                    # --- STOPS DINÂMICOS ---
+                    if 'tp' in dados_trade and 'sl' in dados_trade:
+                        tp = round(float(dados_trade['tp']), price_prec)
+                        sl = round(float(dados_trade['sl']), price_prec)
+                    else:
+                        tp = round(preco_exec * (1 + float(dados_trade.get('tp_pct', 1))/100), price_prec)
+                        sl = round(preco_exec * (1 - float(dados_trade.get('sl_pct', 1))/100), price_prec)
                     self.active_trades[pair] = {
                         'symbol': symbol,
                         'qty': filled_qty,
                         'entry': preco_exec,
+                        'entry_with_fee': preco_compra_com_taxa,
                         'tp': tp,
                         'sl': sl,
                         'estrategia': dados_trade.get('estrategia')
                     }
-                    # create and store monitor task
                     task = asyncio.create_task(self._monitorar_saida(pair))
                     self._monitor_tasks[pair] = task
                     return True
             else:
-                # simulated mode: register fake trade using current price
+                taxa = 0.001
                 preco_exec = preco_atual
-                tp = round(preco_exec * (1 + float(dados_trade.get('tp_pct', 1))/100), price_prec)
-                sl = round(preco_exec * (1 - float(dados_trade.get('sl_pct', 1))/100), price_prec)
+                preco_compra_com_taxa = preco_exec * (1 + taxa)
+                if 'tp' in dados_trade and 'sl' in dados_trade:
+                    tp = round(float(dados_trade['tp']), price_prec)
+                    sl = round(float(dados_trade['sl']), price_prec)
+                else:
+                    tp = round(preco_exec * (1 + float(dados_trade.get('tp_pct', 1))/100), price_prec)
+                    sl = round(preco_exec * (1 - float(dados_trade.get('sl_pct', 1))/100), price_prec)
                 self.active_trades[pair] = {
                     'symbol': symbol,
                     'qty': quantidade,
                     'entry': preco_exec,
+                    'entry_with_fee': preco_compra_com_taxa,
                     'tp': tp,
                     'sl': sl,
                     'estrategia': dados_trade.get('estrategia')
@@ -149,7 +169,7 @@ class ExecutorBot:
         try:
             while pair in self.active_trades:
                 trade = self.active_trades.get(pair)
-                ticker = self.client.get_symbol_ticker(symbol=pair)
+                ticker = retry_api_call(lambda: self.client.get_symbol_ticker(symbol=pair))
                 preco_atual = float(ticker['price'])
                 if preco_atual >= trade['tp'] or preco_atual <= trade['sl']:
                     await self.fechar_posicao(pair, "ALVO/STOP ATINGIDO")
@@ -165,7 +185,7 @@ class ExecutorBot:
         copia_trades = list(self.active_trades.keys())
         for pair in copia_trades:
             trade = self.active_trades[pair]
-            ticker = self.client.get_symbol_ticker(symbol=pair)
+            ticker = retry_api_call(lambda: self.client.get_symbol_ticker(symbol=pair))
             preco_atual = float(ticker['price'])
             lucro_bruto_pct = ((preco_atual / trade['entry']) - 1) * 100
             
@@ -177,7 +197,7 @@ class ExecutorBot:
         if not trade:
             return
         try:
-            venda = self.client.order_market_sell(symbol=pair, quantity=str(trade['qty']))
+            venda = retry_api_call(lambda: self.client.order_market_sell(symbol=pair, quantity=str(trade['qty'])))
             fills = venda.get('fills') or []
             filled_qty = sum(float(f.get('qty') or 0) for f in fills)
             if filled_qty <= 0:
@@ -189,9 +209,89 @@ class ExecutorBot:
             else:
                 avg_price = float(venda.get('fills', [{}])[0].get('price') or trade['entry'])
 
-            pnl = (avg_price - trade['entry']) * filled_qty
+            # Captura taxas reais de cada fill
+            total_commission = 0.0
+            commission_assets = {}
+            for f in fills:
+                commission = float(f.get('commission', 0))
+                asset = f.get('commissionAsset', '')
+                total_commission += commission if asset == 'USDT' else 0.0
+                if asset:
+                    commission_assets[asset] = commission_assets.get(asset, 0.0) + commission
+
+            # Se não houver info de commission nos fills, usa taxa padrão
+            if not fills or not any('commission' in f for f in fills):
+                taxa = 0.001
+            else:
+                taxa = total_commission / filled_qty if filled_qty else 0.001
+
+            preco_venda_com_taxa = avg_price * (1 - taxa)
+            preco_compra_com_taxa = trade.get('entry_with_fee', trade['entry'] * (1 + taxa))
+            bruto = (preco_venda_com_taxa - preco_compra_com_taxa) * filled_qty
+            from datetime import datetime
+            import json
+            import os
+            log_path = os.path.join('data', 'trades_log.json')
+            # Carrega histórico existente
+            try:
+                if os.path.exists(log_path):
+                    with open(log_path, 'r', encoding='utf-8') as f:
+                        trades = json.load(f)
+                else:
+                    trades = []
+            except Exception:
+                trades = []
+            # Captura saldo antes/depois e valores das moedas principais
+            try:
+                from datetime import datetime as dt
+                import json
+                comp_path = os.path.join('data', 'account_composition.json')
+                comp = json.load(open(comp_path, 'r', encoding='utf-8')) if os.path.exists(comp_path) else {}
+                saldo_antes = comp.get('_total_usdt', None)
+                moedas_antes = {k: comp[k] for k in ['BTC', 'ETH', 'BNB', 'USDT', 'DOT', 'LTC', 'TRX', 'ICP'] if k in comp}
+            except Exception:
+                saldo_antes = None
+                moedas_antes = {}
+
+            # Após venda, atualizar comp para saldo depois
+            try:
+                import time
+                time.sleep(1)  # Pequeno delay para garantir atualização
+                comp = json.load(open(comp_path, 'r', encoding='utf-8')) if os.path.exists(comp_path) else {}
+                saldo_depois = comp.get('_total_usdt', None)
+                moedas_depois = {k: comp[k] for k in ['BTC', 'ETH', 'BNB', 'USDT', 'DOT', 'LTC', 'TRX', 'ICP'] if k in comp}
+            except Exception:
+                saldo_depois = None
+                moedas_depois = {}
+
+            trade_log = {
+                'timestamp': datetime.now().isoformat(),
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'pair': pair,
+                'estrategia': trade.get('estrategia'),
+                'qty': filled_qty,
+                'preco_compra_com_taxa': round(preco_compra_com_taxa, 6),
+                'preco_venda_com_taxa': round(preco_venda_com_taxa, 6),
+                'pnl_usdt': round(bruto, 4),
+                'motivo': motivo,
+                'taxa_binance': taxa,
+                'taxa_binance_detalhe': commission_assets,
+                'saldo_antes': saldo_antes,
+                'saldo_depois': saldo_depois,
+                'variacao_saldo': (saldo_depois - saldo_antes) if saldo_antes is not None and saldo_depois is not None else None,
+                'moedas_antes': moedas_antes,
+                'moedas_depois': moedas_depois
+            }
+            trades.append(trade_log)
+            # Salva de volta
+            try:
+                with open(log_path, 'w', encoding='utf-8') as f:
+                    json.dump(trades, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Erro ao salvar trades_log.json: {e}")
+            logger.info(f"Trade fechado: {pair} | Compra c/ taxa: {preco_compra_com_taxa:.6f} | Venda c/ taxa: {preco_venda_com_taxa:.6f} | Qtd: {filled_qty} | Lucro líquido: {bruto:.4f} | Taxas detalhadas: {commission_assets}")
             if self.callback_pnl:
-                await self.callback_pnl(pair, pnl, trade.get('estrategia'))
+                await self.callback_pnl(pair, bruto, trade.get('estrategia'))
             # cleanup
             try:
                 del self.active_trades[pair]

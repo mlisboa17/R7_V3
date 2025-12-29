@@ -50,24 +50,51 @@ class ComunicadorBot:
         await self._enviar(msg)
 
     async def status_handler(self, update, context):
-        """Responde ao comando /status com os dados financeiros reais."""
+        """Responde ao comando /status com dados financeiros completos e visuais."""
         try:
             # Puxa dados do Gestor Financeiro via Estrategista
             stats = self.estrategista.gestor.status_atual()
-            lucro_dia = stats['lucro_hoje']
+            lucro_dia = stats.get('lucro_hoje', 0.0)
             meta_fixa = self.estrategista.gestor.meta_diaria_fixa
-            
-            # Cálculo de progresso
-            progresso = (lucro_dia / meta_fixa) * 100
-            status_meta = "✅ META BATIDA!" if stats['meta_batida'] else f"Faltam ${ (meta_fixa - lucro_dia):.2f}"
+            saldo_inicial = stats.get('saldo_inicial', 0.0)
+            saldo_final = stats.get('saldo_final', 0.0)
+            lucro_mes = stats.get('lucro_mes', 0.0)
+            saldo_inicial_mes = stats.get('saldo_inicial_mes', 0.0)
+            saldo_final_mes = stats.get('saldo_final_mes', 0.0)
+            trades_hoje = stats.get('trades_hoje', 0)
+            trades_mes = stats.get('trades_mes', 0)
+            win_rate_hoje = stats.get('win_rate_hoje', 0.0)
+            win_rate_mes = stats.get('win_rate_mes', 0.0)
+            drawdown_hoje = stats.get('drawdown_hoje', 0.0)
+            drawdown_mes = stats.get('drawdown_mes', 0.0)
+            progresso = (lucro_dia / meta_fixa) * 100 if meta_fixa else 0.0
+            status_meta = "✅ META BATIDA!" if stats.get('meta_batida') else f"Faltam ${ (meta_fixa - lucro_dia):.2f}"
 
+            saldo_earn = 200.02
+            saldo_bots = 142.42
+            saldo_total = saldo_final + saldo_earn + saldo_bots
+            lucro_total = saldo_total - saldo_inicial
             msg = (
                 f"📊 *STATUS R7_V3 SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📈 *Lucro Hoje:* ${lucro_dia:.2f}\n"
-                f"🎯 *Meta Fixa:* ${meta_fixa:.2f} ({progresso:.1f}%)\n"
+                f"💵 *Saldo Inicial do Dia:* ${saldo_inicial:.2f}\n"
+                f"💰 *Saldo Final do Dia:* ${saldo_final:.2f}\n"
+                f"💸 *Earn (USDT):* ${saldo_earn:.2f}\n"
+                f"🤖 *Bots Binance (USDT):* ${saldo_bots:.2f}\n"
+                f"💼 *Saldo Total Consolidado:* ${saldo_total:.2f}\n"
+                f"📈 *Lucro/Prejuízo do Dia:* ${lucro_dia:.2f} USDT\n"
+                f"💹 *Lucro/Prejuízo Consolidado:* ${lucro_total:.2f} USDT\n"
+                f"🎯 *Meta Diária:* ${meta_fixa:.2f} ({progresso:.1f}%)\n"
                 f"🛡️ *Status:* {status_meta}\n"
-                f"⚔️ *Trades Ativos:* {len(self.estrategista.open_positions)}\n"
+                f"⚔️ *Trades Hoje:* {trades_hoje} | 🏆 Win Rate: {win_rate_hoje:.1%}\n"
+                f"📉 *Drawdown Hoje:* {drawdown_hoje:.2f}%\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📅 *Resumo Mensal*\n"
+                f"💵 *Saldo Inicial Mês:* ${saldo_inicial_mes:.2f}\n"
+                f"💰 *Saldo Atual Mês:* ${saldo_final_mes:.2f}\n"
+                f"📈 *Lucro/Prejuízo do Mês:* ${lucro_mes:.2f} USDT\n"
+                f"⚔️ *Trades no Mês:* {trades_mes} | 🏆 Win Rate: {win_rate_mes:.1%}\n"
+                f"📉 *Drawdown Mês:* {drawdown_mes:.2f}%\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🕒 _Dados atualizados em tempo real_"
             )
@@ -84,14 +111,21 @@ class ComunicadorBot:
             logger.error(f"[COMUNICADOR] Erro de envio: {e}")
 
     def start_polling(self):
-        """Roda em background ouvindo seus comandos."""
+        """Roda em background ouvindo seus comandos e respostas."""
         try:
-            # Cria a aplicação para o polling
             app = Application.builder().token(self.token).build()
-            
-            # Adiciona os comandos
             app.add_handler(CommandHandler("status", self.status_handler))
-            
+
+            # Handler para respostas de texto (SIM/NÃO) para meta
+            async def resposta_meta_handler(update, context):
+                texto = update.message.text.strip().upper()
+                if texto in ["SIM", "NÃO", "NAO"]:
+                    if self.estrategista:
+                        self.estrategista._resposta_meta = texto
+                        await update.message.reply_text(f"Recebido: {texto}. Obrigado!", parse_mode='Markdown')
+
+            app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), resposta_meta_handler))
+
             logger.info('[COMUNICADOR] Polling do Telegram iniciado.')
             app.run_polling(drop_pending_updates=True)
         except Exception as e:

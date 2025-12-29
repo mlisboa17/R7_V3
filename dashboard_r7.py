@@ -1,44 +1,81 @@
-import streamlit as st
-import pandas as pd
-import os
+
+
+
+# 5. Lucro por moeda e por bot
+st.subheader("Lucro por Moeda e por Bot")
+try:
+    with open('data/trades_log.json', 'r', encoding='utf-8') as f:
+        trades = json.load(f)
+    lucro_por_moeda = defaultdict(float)
+    lucro_por_bot = defaultdict(float)
+    for trade in trades:
+        pair = trade.get('pair', '')
+        bot = trade.get('estrategia', 'desconhecido')
+        pnl = float(trade.get('pnl_usdt', 0))
+        if pair:
+            symbol = pair.replace('USDT', '').replace('BUSD', '')
+            lucro_por_moeda[symbol] += pnl
+        if bot:
+            lucro_por_bot[bot] += pnl
+    if lucro_por_moeda:
+        st.write("**Lucro por Moeda:**")
+        df_lucro_moeda = pd.DataFrame(list(lucro_por_moeda.items()), columns=["Moeda", "Lucro USDT"])
+        st.dataframe(df_lucro_moeda.sort_values("Lucro USDT", ascending=False), use_container_width=True)
+    if lucro_por_bot:
+        st.write("**Lucro por Bot:**")
+        df_lucro_bot = pd.DataFrame(list(lucro_por_bot.items()), columns=["Bot", "Lucro USDT"])
+        st.dataframe(df_lucro_bot.sort_values("Lucro USDT", ascending=False), use_container_width=True)
+except Exception as e:
+    st.warning(f"Não foi possível calcular lucros por moeda/bot: {e}")
+# (Este arquivo será renomeado para dashboard_r7_old.py para preservar a versão antiga)
+
+
 import logging
 from dotenv import load_dotenv
 
 logger = logging.getLogger('dashboard')
 
-# Optional: import Client lazily so the app starts even if dependency missing
 try:
-    from binance.client import Client
-except Exception:
-    Client = None
+    # Optional: import Client lazily so the app starts even if dependency missing
+    try:
+        from binance.client import Client
+    except Exception:
+        Client = None
 
-# Optional plotly and autorefresh
-try:
-    import plotly.express as px
-except Exception:
-    px = None
-try:
-    from streamlit_autorefresh import st_autorefresh
-except Exception:
-    st_autorefresh = None
+    # Optional plotly and autorefresh
+    try:
+        import plotly.express as px
+    except Exception:
+        px = None
+    try:
+        from streamlit_autorefresh import st_autorefresh
+    except Exception:
+        st_autorefresh = None
 
-# Importar gestor financeiro
-try:
-    from bots.gestor_financeiro import GestorFinanceiro
-    gestor_financeiro = GestorFinanceiro(banca_inicial_mes=1685.46)
+    # Importar gestor financeiro
+    try:
+        from bots.gestor_financeiro import GestorFinanceiro
+        gestor_financeiro = GestorFinanceiro(banca_inicial_mes=1685.46)
+    except Exception as e:
+        logger.warning(f"Não foi possível importar GestorFinanceiro: {e}")
+        gestor_financeiro = None
+
+    # Configuração da Página
+    st.set_page_config(page_title="R7 V3 - Live Dashboard", layout="wide")
+    load_dotenv()
+
+    # Auto-refresh every 30s (if available)
+    if st_autorefresh:
+        st_autorefresh(interval=30000, key="datarefresh")
+    else:
+        st.write("⚠️ `streamlit-autorefresh` não instalado; atualizações manuais necessárias")
+
+    # ...restante do código do dashboard...
+
 except Exception as e:
-    logger.warning(f"Não foi possível importar GestorFinanceiro: {e}")
-    gestor_financeiro = None
-
-# Configuração da Página
-st.set_page_config(page_title="R7 V3 - Live Dashboard", layout="wide")
-load_dotenv()
-
-# Auto-refresh every 30s (if available)
-if st_autorefresh:
-    st_autorefresh(interval=30000, key="datarefresh")
-else:
-    st.write("⚠️ `streamlit-autorefresh` não instalado; atualizações manuais necessárias")
+    st.error(f"Erro crítico ao carregar o dashboard: {e}")
+    import traceback
+    st.code(traceback.format_exc())
 
 # Configurações de Banca
 SALDO_INICIAL = 1743.12
@@ -96,10 +133,11 @@ def buscar_dados_reais():
         return SALDO_INICIAL
 
 # Interface Streamlit
+
 st.title("📊 R7 V3 - Monitoramento de Banca")
 
 # Criar abas
-tab_principal, tab_bots = st.tabs(["📈 Visão Geral", "🤖 Performance dos Bots"])
+tab_principal, tab_bots, tab_info = st.tabs(["📈 Visão Geral", "🤖 Performance dos Bots", "ℹ️ Mais Informações"])
 
 with tab_principal:
     if client:
@@ -180,10 +218,12 @@ with tab_principal:
     progresso = (lucro_abs / META_DIARIA) if lucro_abs > 0 else 0.0
 
     # Métricas: Inicial (fixo), Saldo do Momento (calculado), Resultado
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Banca Inicial", f"${SALDO_INICIAL:,.2f}")
     col2.metric("Saldo do Momento (USDT)", f"${saldo_agora:,.2f}", f"${lucro_abs:,.2f}")
     col3.metric("Resultado", f"${lucro_abs:,.2f}", f"{(lucro_abs/SALDO_INICIAL)*100:.2f}%")
+    col4.metric("Earn (USDT)", f"$200,02")
+    col5.metric("Bots Binance (USDT)", f"$142,42")
 
     # Enviar relatório instantâneo via Telegram (controlado por session_state para evitar spam)
     try:
@@ -266,6 +306,63 @@ with tab_principal:
 with tab_bots:
     st.header("🤖 Performance Individual dos Bots")
     st.write("Análise detalhada do desempenho de cada estratégia de trading")
+    # ...existing code...
+
+
+# Nova aba: Mais Informações
+with tab_info:
+    st.header("ℹ️ Mais Informações")
+    st.write("Painel de moedas em aberto por bot, estatísticas e informações relevantes.")
+
+    import json
+    import platform
+    from collections import defaultdict
+
+    # 1. Moedas em aberto por bot (exemplo: usando trades_log.json)
+    st.subheader("Moedas em Aberto por Bot")
+    try:
+        with open('data/trades_log.json', 'r', encoding='utf-8') as f:
+            trades = json.load(f)
+        # Considera como 'em aberto' as últimas moedas operadas por cada bot (simplificação)
+        open_by_bot = defaultdict(set)
+        for trade in trades:
+            bot = trade.get('estrategia', 'desconhecido')
+            pair = trade.get('pair', '')
+            if pair and bot:
+                # Extrai moeda base (ex: BTC de BTCUSDT)
+                symbol = pair.replace('USDT', '').replace('BUSD', '')
+                open_by_bot[bot].add(symbol)
+        for bot, moedas in open_by_bot.items():
+            st.write(f"**{bot.upper()}**: {', '.join(sorted(moedas)) if moedas else 'Nenhuma'}")
+    except Exception as e:
+        st.warning(f"Não foi possível carregar trades_log.json: {e}")
+
+    # 2. Estatísticas rápidas dos ativos atuais
+    st.subheader("Estatísticas dos Ativos Atuais")
+    try:
+        with open('data/account_composition.json', 'r', encoding='utf-8') as f:
+            comp = json.load(f)
+        ativos = {k: v for k, v in comp.items() if not k.startswith('_') and k != 'Earn/Staking' and v > 0}
+        st.write(f"Total de ativos: {len(ativos)}")
+        st.write(f"Ativos com saldo: {', '.join(ativos.keys())}")
+        st.write(f"Saldo total estimado (USDT): {comp.get('_total_usdt', 0):,.2f}")
+    except Exception as e:
+        st.warning(f"Não foi possível carregar account_composition.json: {e}")
+
+    # 3. Estatísticas do Sistema
+    st.subheader("Estatísticas do Sistema")
+    st.write(f"Sistema operacional: {platform.system()} {platform.release()}")
+    st.write(f"Python: {platform.python_version()}")
+
+    # 4. Resumo dos arquivos de dados
+    st.subheader("Resumo dos Arquivos de Dados")
+    data_dir = 'data'
+    if os.path.exists(data_dir):
+        arquivos = os.listdir(data_dir)
+        st.write(f"Arquivos encontrados em '{data_dir}':")
+        st.write(arquivos)
+    else:
+        st.write(f"Diretório '{data_dir}' não encontrado.")
 
     try:
         # Importar funções de estatísticas e configurações
