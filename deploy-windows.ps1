@@ -82,8 +82,8 @@ if ($null -eq $result) {
 
 # Clonar/atualizar repositório
 Write-Host "📥 Clonando repositório..." -ForegroundColor Yellow
-Invoke-SSHCommand "cd /home/ec2-user && rm -rf R7_V3"  # Limpar versão anterior se existir
-Invoke-SSHCommand "cd /home/ec2-user && git clone https://github.com/mlisboa17/R7_V3.git"
+Invoke-SSHCommand "cd /home/ec2-user; rm -rf R7_V3"  # Limpar versão anterior se existir
+Invoke-SSHCommand "cd /home/ec2-user; git clone https://github.com/mlisboa17/R7_V3.git"
 
 # Copiar arquivos de configuração
 Write-Host "📋 Copiando arquivos de configuração..." -ForegroundColor Yellow
@@ -102,11 +102,11 @@ if (Test-Path $envPath) {
 # Configurar permissões
 Write-Host "🔧 Configurando permissões..." -ForegroundColor Yellow
 Invoke-SSHCommand "sudo chown -R ec2-user:ec2-user /home/ec2-user/R7_V3"
-Invoke-SSHCommand "cd /home/ec2-user/R7_V3 && chmod +x *.sh"
+Invoke-SSHCommand "cd /home/ec2-user/R7_V3; chmod +x *.sh"
 
 # Verificar arquivo .env
 Write-Host "🔍 Verificando configuração..." -ForegroundColor Yellow
-$result = Invoke-SSHCommand "cd /home/ec2-user/R7_V3 && grep -c 'your_binance_api_key_here' .env || echo '0'"
+$result = Invoke-SSHCommand "cd /home/ec2-user/R7_V3; grep -c 'your_binance_api_key_here' .env"
 if ($result -and $result.Trim() -ne "0") {
     Write-Host "⚠️  CHAVES DA BINANCE NÃO CONFIGURADAS!" -ForegroundColor Yellow
     Write-Host "Edite o arquivo .env na instância EC2:" -ForegroundColor Yellow
@@ -120,7 +120,7 @@ if ($result -and $result.Trim() -ne "0") {
 
 # Executar deploy
 Write-Host "🚀 Executando deploy..." -ForegroundColor Yellow
-$result = Invoke-SSHCommand "cd /home/ec2-user/R7_V3 && ./deploy-aws.sh deploy"
+$result = Invoke-SSHCommand "cd /home/ec2-user/R7_V3; ./deploy-aws.sh deploy"
 
 if ($null -eq $result) {
     Write-Host "❌ Falha no deploy" -ForegroundColor Red
@@ -133,25 +133,26 @@ Start-Sleep -Seconds 15
 
 # Verificar status
 Write-Host "📊 Verificando status..." -ForegroundColor Yellow
-$result = Invoke-SSHCommand "cd /home/ec2-user/R7_V3 && docker-compose ps"
+$result = Invoke-SSHCommand "cd /home/ec2-user/R7_V3; docker-compose ps"
 
 if ($result -and $result -match "Up") {
-    Write-Host "" -ForegroundColor Green
+    Write-Host ""
     Write-Host "🎉 DEPLOY CONCLUÍDO COM SUCESSO!" -ForegroundColor Green
-    Write-Host "" -ForegroundColor Green
+    Write-Host ""
     Write-Host "📊 URLs de Acesso:" -ForegroundColor Cyan
     Write-Host "   Dashboard Streamlit: http://$PublicIP`:8501" -ForegroundColor Cyan
     Write-Host "   Interface Web:       http://$PublicIP`:8080" -ForegroundColor Cyan
-    Write-Host "" -ForegroundColor Green
+    Write-Host ""
     Write-Host "🔧 Comandos de gerenciamento:" -ForegroundColor Yellow
-    Write-Host "   Ver logs:     ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3 && docker-compose logs -f'" -ForegroundColor Yellow
-    Write-Host "   Reiniciar:   ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3 && docker-compose restart'" -ForegroundColor Yellow
-    Write-Host "   Parar:       ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3 && docker-compose down'" -ForegroundColor Yellow
-    Write-Host "" -ForegroundColor Green
+    Write-Host "   Ver logs:     ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3; docker-compose logs -f'" -ForegroundColor Yellow
+    Write-Host "   Reiniciar:   ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3; docker-compose restart'" -ForegroundColor Yellow
+    Write-Host "   Parar:       ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3; docker-compose down'" -ForegroundColor Yellow
+    Write-Host ""
     Write-Host "📁 Arquivos na EC2: /home/ec2-user/R7_V3" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "❌ Serviços não iniciaram corretamente" -ForegroundColor Red
     Write-Host "Verifique os logs:" -ForegroundColor Red
-    Write-Host "ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3 && docker-compose logs'" -ForegroundColor Red
+    Write-Host "ssh -i '$KeyPath' ec2-user@$PublicIP 'cd R7_V3; docker-compose logs'" -ForegroundColor Red
     exit 1
 }

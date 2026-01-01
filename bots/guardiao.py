@@ -1,63 +1,61 @@
 import logging
 import json
 import os
-from datetime import date
-from bots.gestor_financeiro import GestorFinanceiro
 
 logger = logging.getLogger('guardiao')
 
 class GuardiaoBot:
     def __init__(self, config, executor=None):
-        """
-        Guardião Sniper R7_V3.
-        Monitora metas de $20, stops de $25 e exposição de $120.
-        """
         self.config = config
         self.executor = executor
-        
-        # Sincronização com os saldos hierárquicos
-        self.gestor = GestorFinanceiro(meta_diaria=config['config_geral'].get('meta_diaria_total_usdt', 23.11))
-        
-        # Parâmetros de Segurança
-        self.banca_referencia = config.get('banca_referencia_usdt', 1870.00)
-        self.exposicao_max = config['config_geral'].get('exposicao_maxima_usdt', 120.0)
-        self.stop_loss_diario = -config['config_geral'].get('stop_loss_diario_usdt', 25.0)
-        self.meta_diaria = self.gestor.meta_diaria
-        
-        # Lucro do dia carregado do Gestor
-        self.lucro_dia = self.gestor.dados.get("lucro_acumulado_dia", 0.0)
+        # Moedas ignoradas para o cálculo de risco (Holding/Earn)
+        self.ativos_ignorar = ["ADA", "ICP", "GIGGLE"] 
 
-    def update_lucro_usdt(self, pnl, estrategia):
-        """Atualiza o lucro e ajusta o rigor da IA se bater a meta de segurança ($10)."""
-        self.gestor.atualizar_lucro(pnl, estrategia)
-        self.lucro_dia = self.gestor.dados["lucro_acumulado_dia"]
-        
-        # Meta de Segurança atingida: Aumenta threshold da IA para 0.85 (Sniper Ultra)
-        if self.lucro_dia >= 10.0 and self.executor:
-            if hasattr(self.executor, 'ia_threshold'):
-                self.executor.ia_threshold = 0.85
-                logger.info("🛡️ Meta de Segurança ($10) atingida. IA em modo SNIPER (0.85).")
+    async def validar_operacao(self, simbolo, valor_entrada):
+        """
+        Valida a entrada ignorando moedas de holding e respeitando o novo limite.
+        """
+        try:
+            path_composicao = 'data/account_composition.json'
+            
+            if not os.path.exists(path_composicao):
+                logger.warning("⚠️ Aguardando dados do AccountMonitor para validar...")
+                return "AGUARDANDO_DADOS"
 
-    def validar_operacao(self, active_trades, symbol_ou_sistema="SISTEMA"):
-        """A última barreira antes da ordem ser enviada."""
-        
-        # 1. Trava de Lucro Máximo (Meta batida)
-        if self.lucro_dia >= self.meta_diaria:
-            return False, f"Meta de ${self.meta_diaria} atingida. Dia encerrado."
-        
-        # 2. Trava de Stop Loss Diário
-        if self.lucro_dia <= self.stop_loss_diario:
-            return False, f"Stop Loss Diário de ${abs(self.stop_loss_diario)} atingido."
+            with open(path_composicao, 'r') as f:
+                composicao = json.load(f)
 
-        # 3. Trava de Exposição Financeira ($120)
-        exposicao_atual = sum(t.get('qty', 0) * t.get('entry', 0) for t in active_trades.values())
-        if (exposicao_atual + 25.0) > self.exposicao_max:
-            return False, f"Exposição máxima de ${self.exposicao_max} atingida."
+            # 1. CÁLCULO DA EXPOSIÇÃO OPERACIONAL
+            # Filtra moedas de holding para não sufocar o limite de trade
+            exposicao_operacional = 0.0
+            for asset, data in composicao.items():
+                if asset.startswith("_") or asset in self.ativos_ignorar:
+                    continue
+                exposicao_operacional += data.get('usd_val', 0)
 
-        # 4. Verificação por Moeda (Evita repetição)
-        if symbol_ou_sistema != "SISTEMA":
-            pair = f"{symbol_ou_sistema}USDT"
-            if pair in active_trades:
-                return False, f"Já posicionado em {symbol_ou_sistema}."
+            # Busca limite do settings.json (Recomendado: 1500.00 ou 2200.00)
+            limite_max = self.config['config_geral']['exposicao_maxima_usdt']
+            
+            # 2. TRAVA DE EXPOSIÇÃO CRÍTICA
+            if (exposicao_operacional + valor_entrada) > limite_max:
+                logger.warning(f"🚫 BLOQUEIO: Exposição Sniper (${exposicao_operacional:.2f}) atingiria limite de ${limite_max}")
+                return "LIMITE_EXPOSICAO"
 
-        return True, "Aprovado"
+            # 3. VERIFICAÇÃO DE DUPLICIDADE
+            # Evita comprar a mesma moeda duas vezes simultaneamente
+            if self.executor and simbolo in self.executor.active_trades:
+                logger.info(f"ℹ️ {simbolo} já está em operação ativa. Pulando.")
+                return "MOEDA_JA_ATIVA"
+
+            # 4. VERIFICAÇÃO DE CICLO ENCERRADO
+            if self.executor and hasattr(self.executor, 'estrategista'):
+                if self.executor.estrategista.trava_dia_encerrado:
+                    logger.info("🚫 Sniper pausado: Meta diária já processada.")
+                    return "META_BATIDA"
+
+            logger.info(f"✅ Guardião: Exposição Sniper em ${exposicao_operacional:.2f}. {simbolo} LIBERADO.")
+            return "OK"
+
+        except Exception as e:
+            logger.error(f"🚨 Erro na validação do Guardião: {e}")
+            return "ERRO_SISTEMA"

@@ -57,7 +57,6 @@ class IAEngine:
             print(f"   - VALOR: ${valor:.2f}")
             print(f"   - DESCRIÇÃO: {descricao}")
 
-            # Confirmação manual via teclado
             confirmacao = input("Confirmar este registro no banco de dados? (s/n): ").strip().lower()
 
             if confirmacao != 's':
@@ -67,13 +66,11 @@ class IAEngine:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
 
-            # Inserção detalhada
             cursor.execute('''
                 INSERT INTO movimentacoes (tipo, valor, descricao)
                 VALUES (?, ?, ?)
             ''', (tipo.upper(), valor, descricao))
 
-            # Atualização do saldo no daily_states
             hoje = datetime.now().date().isoformat()
             ajuste = valor if tipo.upper() == 'APORTE' else -valor
 
@@ -96,7 +93,6 @@ class IAEngine:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Tabela de análises técnicas
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS analises (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +106,6 @@ class IAEngine:
             )
         ''')
 
-        # Tabela de estados diários (Performance)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS daily_states (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,18 +123,16 @@ class IAEngine:
             )
         ''')
         
-        # Migração: Garante colunas de aporte/saque em bancos antigos
         try:
             cursor.execute('ALTER TABLE daily_states ADD COLUMN aporte REAL DEFAULT 0;')
             cursor.execute('ALTER TABLE daily_states ADD COLUMN saque REAL DEFAULT 0;')
         except sqlite3.OperationalError:
             pass 
             
-        # Tabela de Movimentações (Histórico de Aportes/Retiradas/Realocações)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS movimentacoes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo TEXT,        -- REALOCADA, APORTE, RETIRADA
+                tipo TEXT,
                 valor REAL,
                 descricao TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -150,9 +143,6 @@ class IAEngine:
         conn.close()
 
     def get_historico_for_train(self):
-        """
-        Busca no SQLite as análises passadas com desfecho para treino.
-        """
         try:
             conn = sqlite3.connect(self.db_path)
             df = pd.read_sql_query('SELECT * FROM analises WHERE sucesso IS NOT NULL', conn)
@@ -163,7 +153,6 @@ class IAEngine:
             return pd.DataFrame()
 
     def predict(self, data, symbol=None):
-        """Assinatura Universal: Previne erro de argumentos."""
         if self.model is None: return {"sinal": "WAIT", "confianca": 0.5}
         try:
             if isinstance(data, (int, float)):
@@ -186,7 +175,6 @@ class IAEngine:
             return {"sinal": "WAIT", "confianca": 0.0}
 
     async def analisar_tick(self, symbol, preco_atual, buffer_precos):
-        """Análise em tempo real via WebSocket."""
         try:
             if len(buffer_precos) < 20:
                 return {"decisao": "AGUARDAR", "estrategia": "none", "forca": 0}
@@ -220,7 +208,7 @@ class IAEngine:
             return {"decisao": "AGUARDAR", "estrategia": "none", "forca": 0}
 
     def train(self):
-        """Treina a IA com dados do DB e CSV."""
+        """Treina a IA garantindo que os targets sejam binários/discretos."""
         try:
             df_db = self.get_historico_for_train()
             df_csv = pd.read_csv('data/historico_ia.csv') if os.path.exists('data/historico_ia.csv') else pd.DataFrame()
@@ -236,9 +224,14 @@ class IAEngine:
             
             df = df.dropna(subset=['sucesso'])
             X = df[features].fillna(0)
+            
+            # --- CORREÇÃO DO ERRO DE TARGET CONTÍNUO ---
+            # Converte a coluna 'sucesso' (que pode vir como lucro real/contínuo) em 0 ou 1.
             y = df['sucesso']
-
-            self.model.fit(X, y)
+            y_numeric = pd.to_numeric(y, errors='coerce').fillna(0)
+            y_binary = (y_numeric > 0).astype(int) 
+            
+            self.model.fit(X, y_binary)
             self.save_model()
             logger.info(f"🧠 IA SNIPER TREINADA. Exemplos: {len(df)}")
             return True

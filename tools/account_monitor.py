@@ -1,67 +1,38 @@
-import json
-import os
-import logging
 import asyncio
+import json
+import logging
 from datetime import datetime
-from utils.binance_retry import retry_api_call
 
-logger = logging.getLogger('account_monitor')
+logger = logging.getLogger('monitor')
 
 class AccountMonitor:
     def __init__(self, client):
-        """
-        Recebe o cliente da Binance já instanciado no Executor.
-        """
         self.client = client
-        self.path = os.path.join('data', 'account_composition.json')
-        # Moedas que o R7_V3 monitora ativamente
-        self.assets_of_interest = ['BTC', 'ETH', 'BNB', 'USDT', 'SOL', 'ADA', 'DOT', 'LINK', 'FET', 'RENDER', 'NEAR', 'AVAX', 'XRP']
+        self.path = 'data/account_composition.json'
 
     async def monitor_loop(self):
-        """
-        Loop contínuo que atualiza a composição da conta a cada 30 segundos.
-        """
-        logger.info("🔄 Iniciando monitor contínuo de saldo (30s interval)")
+        logger.info("📡 Monitor de Saldo Dinâmico Iniciado.")
         while True:
             try:
-                await self.atualizar_composicao()
-                await asyncio.sleep(30)  # Atualiza a cada 30 segundos
-            except Exception as e:
-                logger.error(f"Erro no loop de monitoramento: {e}")
-                await asyncio.sleep(10)  # Espera 10 segundos em caso de erro
-
-    async def atualizar_composicao(self):
-        try:
-            account_info = await self.client.get_account()
-            balances = account_info['balances']
-            nova_composicao = {}
-            total_geral_usdt = 0.0
-
-            for b in balances:
-                qty = float(b['free']) + float(b['locked'])
-                if qty <= 0: continue
+                account = await self.client.get_account()
+                balances = [b for b in account['balances'] if float(b['free']) + float(b['locked']) > 0]
                 
-                asset = b['asset']
-                if asset == 'USDT':
-                    valor_usd = qty
-                else:
+                composicao = {}
+                total_usdt = 0.0
+                for b in balances:
+                    asset, qty = b['asset'], float(b['free']) + float(b['locked'])
                     try:
-                        # Tenta pegar o preço atual da Binance
-                        ticker = await self.client.get_symbol_ticker(symbol=f"{asset}USDT")
-                        valor_usd = qty * float(ticker['price'])
-                    except:
-                        continue # Ignora moedas que não têm par USDT (como GIGGLE)
+                        price = 1.0 if asset == 'USDT' else float((await self.client.get_symbol_ticker(symbol=f"{asset}USDT"))['price'])
+                        val_usd = qty * price
+                        if val_usd > 1.0:
+                            composicao[asset] = {"qty": qty, "usd_val": round(val_usd, 2)}
+                            total_usdt += val_usd
+                    except: continue
 
-                if valor_usd > 1.0: # Só registra o que vale mais de 1 dólar
-                    nova_composicao[asset] = {"qty": qty, "usd_val": round(valor_usd, 2)}
-                    total_geral_usdt += valor_usd
-
-            nova_composicao['_total_usdt'] = round(total_geral_usdt, 2)
-            nova_composicao['_timestamp'] = datetime.now().isoformat()
-
-            # GRAVAÇÃO DINÂMICA
-            with open('data/account_composition.json', 'w') as f:
-                json.dump(nova_composicao, f, indent=2)
-                
-        except Exception as e:
-            logger.error(f"Erro ao atualizar saldo dinâmico: {e}")
+                composicao.update({"_total_usdt": round(total_usdt, 2), "_timestamp": datetime.now().isoformat()})
+                with open(self.path, 'w') as f:
+                    json.dump(composicao, f, indent=2)
+                await asyncio.sleep(30)
+            except Exception as e:
+                logger.error(f"Erro Monitor: {e}")
+                await asyncio.sleep(10)

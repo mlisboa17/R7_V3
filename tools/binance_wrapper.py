@@ -1,7 +1,27 @@
 import os
 import asyncio
-from binance import AsyncClient
 from binance.exceptions import BinanceAPIException
+
+# Compatibilidade com diferentes versões do SDK binance
+AsyncClient = None
+Client = None
+try:
+    # nova estrutura (quando disponível)
+    from binance.async_client import AsyncClient as _AsyncClient
+    AsyncClient = _AsyncClient
+except Exception:
+    try:
+        # fallback antigo
+        from binance import AsyncClient as _AsyncClient2
+        AsyncClient = _AsyncClient2
+    except Exception:
+        try:
+            # tentar o cliente síncrono
+            from binance.client import Client as _Client
+            Client = _Client
+        except Exception:
+            AsyncClient = None
+            Client = None
 
 DEFAULT_RETRIES = int(os.getenv('BINANCE_API_RETRIES', '5'))
 DEFAULT_BACKOFF = float(os.getenv('BINANCE_API_BACKOFF', '1.0'))
@@ -17,18 +37,25 @@ class BinanceClientWrapper:
         self.backoff = backoff
         
         # Calculate timestamp offset to sync with Binance server
-        try:
-            # Fixed offset since system time is ahead by ~28 seconds
-            timestamp_offset = -30000  # 30 seconds behind to be safe
-            self.client = AsyncClient(self.api_key, self.secret, testnet=False, timestamp_offset=timestamp_offset, requests_params={'timeout': 30})
-        except Exception as e:
-            # Fallback
-            self.client = AsyncClient(self.api_key, self.secret, testnet=False, requests_params={'timeout': 30})
-        
-        # Override __del__ to prevent AttributeError
-        self.client.__del__ = lambda: None
-        # Override close_connection to prevent AttributeError
-        self.client.close_connection = lambda: None
+        # Instancia o cliente async se disponível, caso contrário usa o cliente síncrono
+        timestamp_offset = -30000  # 30 seconds behind to be safe
+        if AsyncClient is not None:
+            try:
+                self.client = AsyncClient(self.api_key, self.secret, testnet=False, timestamp_offset=timestamp_offset, requests_params={'timeout': 30})
+            except Exception:
+                self.client = AsyncClient(self.api_key, self.secret, testnet=False, requests_params={'timeout': 30})
+            self._is_async = True
+            # Proteções para evitar __del__/close issues
+            try: self.client.__del__ = lambda: None
+            except Exception: pass
+            try: self.client.close_connection = lambda: None
+            except Exception: pass
+        elif Client is not None:
+            # Cliente síncrono: será executado em thread via asyncio.to_thread
+            self.client = Client(self.api_key, self.secret)
+            self._is_async = False
+        else:
+            raise RuntimeError("Nenhum cliente Binance disponível (instale python-binance ou binance-connector)")
 
     async def _call_with_retries(self, fn, *a, **kw):
         delay = self.backoff
@@ -51,9 +78,15 @@ class BinanceClientWrapper:
     def __getattr__(self, name):
         attr = getattr(self.client, name)
         if callable(attr):
-            async def wrapper(*a, **kw):
-                return await self._call_with_retries(attr, *a, **kw)
-            return wrapper
+            if getattr(self, '_is_async', True):
+                async def wrapper(*a, **kw):
+                    return await self._call_with_retries(attr, *a, **kw)
+                return wrapper
+            else:
+                async def wrapper_sync(*a, **kw):
+                    # Executa chamada síncrona em thread para não bloquear o loop
+                    return await self._call_with_retries(lambda *aa, **kk: asyncio.to_thread(attr, *aa, **kk), *a, **kw)
+                return wrapper_sync
         return attr
 
 
