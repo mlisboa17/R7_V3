@@ -62,8 +62,38 @@ def update_account_composition():
                             # Se não conseguir, manter como cripto (não adicionar ao total)
                             composicao[asset['asset']] = total
         
-        # Adicionar Earn/Staking (placeholder por enquanto)
-        earn_usdt = 0.0  # Ajustado para 0
+        # Adicionar Earn/Staking
+        earn_usdt = 0.0
+        try:
+            # Flexible Savings
+            lending_account = client.get_lending_union_account()
+            for position in lending_account.get('positionVos', []):
+                amount = float(position.get('amount', 0))
+                asset = position.get('asset')
+                if asset == 'USDT':
+                    earn_usdt += amount
+                else:
+                    symbol_usdt = f"{asset}USDT"
+                    if symbol_usdt in prices:
+                        earn_usdt += amount * prices[symbol_usdt]
+        except Exception as e:
+            print(f"Aviso: Não foi possível obter dados de Flexible Savings: {e}")
+        
+        try:
+            # Staking Products
+            staking_positions = client.get_staking_product_position()
+            for position in staking_positions:
+                amount = float(position.get('amount', 0))
+                asset = position.get('asset')
+                if asset == 'USDT':
+                    earn_usdt += amount
+                else:
+                    symbol_usdt = f"{asset}USDT"
+                    if symbol_usdt in prices:
+                        earn_usdt += amount * prices[symbol_usdt]
+        except Exception as e:
+            print(f"Aviso: Não foi possível obter dados de Staking: {e}")
+        
         composicao['Earn/Staking'] = earn_usdt
         total_usdt += earn_usdt
         

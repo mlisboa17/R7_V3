@@ -1,86 +1,96 @@
-import os
 import logging
-import pandas as pd
-from binance.client import Client
-import sys
-sys.path.append('..')
-from utils.volatility import calculate_volatility
+import os
+import asyncio
+import pandas as pd  # Resolvendo definitivamente o erro de 'NameError: pd'
+import pandas_ta as ta
 
 logger = logging.getLogger('analista')
 
-
 class AnalistaBot:
-    def __init__(self, config):
+    def __init__(self, config, client=None, ia=None):
+        """
+        Inicializa o analista com acesso à API e ao motor de IA treinado.
+        """
         self.config = config
-        from tools.binance_wrapper import get_binance_client
-        self.client = get_binance_client()
+        self.client = client
+        self.ia = ia  # Objeto da IA com os 13.760 padrões carregados
+        self.historico_df = {}
+        
+        # Configurações de alvos (Style Mapping)
+        self.mapeamento_estilos = {
+            'scalping_v6': ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'],
+            'momentum_boost': ['SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'FETUSDT', 'RNDRUSDT'],
+            'swing_rwa': ['ADAUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT', 'MATICUSDT', 'LTCUSDT', 'ATOMUSDT']
+        }
 
     def calculate_indicators(self, df):
-        """Calcula RSI, Médias Móveis e MACD para precisão técnica."""
-        # RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        # Médias e MACD
-        df['ema5'] = df['close'].ewm(span=5, adjust=False).mean()
-        df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
-        df['macd'] = df['close'].ewm(span=12).mean() - df['close'].ewm(span=26).mean()
-        df['signal'] = df['macd'].ewm(span=9).mean()
-        return df
+        """
+        Calcula indicadores técnicos necessários para validar o sinal da IA.
+        """
+        try:
+            if df is None or len(df) < 25:
+                return df
+            
+            # RSI para identificar exaustão
+            df['rsi'] = ta.rsi(df['close'], length=14)
+            
+            # Médias Móveis para conferir tendência
+            df['ema5'] = ta.ema(df['close'], length=5)
+            df['ema20'] = ta.ema(df['close'], length=20)
+            
+            # Bandas de Bollinger para volatilidade de curto prazo
+            bb = ta.bbands(df['close'], length=20, std=2)
+            if bb is not None:
+                df['bb_lower'] = bb['BBL_20_2.0']
+                df['bb_upper'] = bb['BBU_20_2.0']
 
+            return df
+        except Exception as e:
+            logger.error(f"Erro no cálculo de indicadores técnicos: {e}")
+            return df
 
-    async def buscar_oportunidades(self, estrategista=None):
-        """Varre as moedas definidas para cada uma das 4 estratégias, sugerindo sizing/stops dinâmicos se estrategista for fornecido."""
-        oportunidades = []
-        regras_moedas = {
-            'scalping_v6': ['SOL', 'ADA', 'DOT', 'XRP'],
-            'swing_rwa': ['BTC', 'ETH', 'LINK'],
-            'momentum_boost': ['FET', 'RENDER', 'NEAR'],
-            'mean_reversion': ['BNB', 'AVAX']
-        }
+    async def analisar_tick(self, symbol, preco_atual):
+        """
+        MÉTODO CIRÚRGICO: Invocado pelo SniperMonitor em tempo real (Tick-by-Tick).
+        Cruza a predição da IA com os filtros de segurança.
+        """
+        try:
+            # 1. Determina a Estratégia Baseada no Ativo
+            est_nome = 'swing_rwa' # Default
+            for style, symbols in self.mapeamento_estilos.items():
+                if symbol in symbols:
+                    est_nome = style
+                    break
 
-        for nome_est, moedas in regras_moedas.items():
-            config_est = self.config['estrategias'].get(nome_est)
-            if not config_est or not config_est.get('ativo'): continue
+            # Define força de entrada conforme o estilo
+            forca_base = 1.5 if est_nome == 'scalping_v6' else 1.2 if est_nome == 'momentum_boost' else 1.0
 
-            for symbol in moedas:
-                try:
-                    pair = f"{symbol}USDT"
-                    klines = self.client.get_klines(symbol=pair, interval=config_est['tempo_grafico'], limit=50)
-                    df = pd.DataFrame(klines, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'ct', 'qv', 'nt', 'tb', 'tq', 'i'])
-                    df['close'] = df['close'].astype(float)
-                    df = self.calculate_indicators(df)
-                    last = df.iloc[-1]
+            # 2. CONSULTA AO MOTOR DE IA (Predictive Analysis)
+            decisao = "AGUARDAR"
+            
+            if self.ia:
+                # O método predict da sua IA avalia o tick contra os 13k padrões
+                predicao = self.ia.predict(symbol, preco_atual)
+                
+                # Filtro de Confiança Crítico: Mínimo 85% de acurácia técnica
+                if predicao.get('sinal') == 'BUY' and predicao.get('confianca', 0) >= 0.85:
+                    # Opcional: Adicionar conferência técnica extra aqui (ex: rsi < 70)
+                    decisao = "COMPRAR"
+                    logger.info(f"🎯 SINAL SNIPER CONFIRMADO: {symbol} | IA Confiança: {predicao['confianca']:.2%}")
 
-                    sinal = None
-                    if nome_est == 'scalping_v6' and last['rsi'] < 42 and last['close'] > last['ema5']:
-                        sinal = self._formatar_sinal(symbol, nome_est, last['close'], 0.45, 0.55)
-                    elif nome_est == 'swing_rwa' and last['close'] > last['ema20'] and last['macd'] > last['signal']:
-                        sinal = self._formatar_sinal(symbol, nome_est, last['close'], 2.50, 1.50)
+            return {
+                "decisao": decisao,
+                "estrategia": est_nome,
+                "forca": forca_base
+            }
 
-                    # --- MELHORIA: Sizing e stops dinâmicos ---
-                    if sinal and estrategista is not None:
-                        saldo = self.config.get('banca_referencia_usdt', 2020.0)
-                        prices = df['close'].tolist()
-                        # Calcula tamanho da posição e stops dinâmicos
-                        size = estrategista.calcular_position_size(prices, saldo)
-                        stop, alvo = estrategista.definir_stops(last['close'], prices)
-                        sinal['position_size'] = size
-                        sinal['sl'] = stop
-                        sinal['tp'] = alvo
-                        sinal.pop('tp_pct', None)
-                        sinal.pop('sl_pct', None)
-                    if sinal:
-                        oportunidades.append(sinal)
-                except Exception as e:
-                    logger.error(f"Erro analisando {symbol}: {e}")
-        return oportunidades
+        except Exception as e:
+            logger.error(f"Falha na análise técnica em tempo real para {symbol}: {e}")
+            return {"decisao": "AGUARDAR", "estrategia": "none", "forca": 0}
 
-    def _formatar_sinal(self, symbol, est, preco, tp, sl):
-        return {
-            'symbol': symbol, 'estrategia': est, 'price': preco,
-            'entrada_usd': 100.0, 'tp_pct': tp, 'sl_pct': sl
-        }
+    async def atualizar_historico_cache(self, symbol):
+        """
+        Mantém os últimos candles em memória para que os indicadores não sejam zerados.
+        """
+        # Implementação futura se desejar cálculos de indicadores mais complexos no Sniper
+        pass

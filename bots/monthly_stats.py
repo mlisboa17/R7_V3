@@ -2,90 +2,81 @@ import os
 import json
 from datetime import date
 
-def get_monthly_stats_path():
-    return os.path.join('data', 'monthly_stats.json')
-
-def load_monthly_stats():
-    path = get_monthly_stats_path()
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-def save_monthly_stats(stats):
-    path = get_monthly_stats_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(stats, f, indent=2, ensure_ascii=False)
+def mapear_estrategia(nome_bruto):
+    """Consolida Analista/Estrategista no Sniper Pro."""
+    n = str(nome_bruto).lower()
+    if any(x in n for x in ["analista", "estrategista", "ia"]): return "IA Sniper Pro"
+    if "scalping" in n: return "Scalping V6"
+    if "momentum" in n: return "Momentum Boost"
+    if "swing" in n or "rwa" in n: return "Swing RWA"
+    return nome_bruto
 
 def add_profit_by_strategy(profit, estrategia, report_date=None):
-    """
-    Registra o lucro separando por BOT/ESTRATÉGIA.
-    Estrutura: stats[mes][data][estrategia] = valor
-    """
-    stats = load_monthly_stats()
-    if report_date is None:
-        report_date = date.today().isoformat()
+    path = os.path.join('data', 'monthly_stats.json')
+    stats = {}
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f: stats = json.load(f)
     
-    month_key = report_date[:7]
+    report_date = report_date or date.today().isoformat()
+    month_key, est_limpa = report_date[:7], mapear_estrategia(estrategia)
     
-    if month_key not in stats:
-        stats[month_key] = {}
-    if report_date not in stats[month_key]:
-        stats[month_key][report_date] = {}
+    if month_key not in stats: stats[month_key] = {}
+    if report_date not in stats[month_key]: stats[month_key][report_date] = {}
+    
+    stats[month_key][report_date][est_limpa] = round(stats[month_key][report_date].get(est_limpa, 0.0) + profit, 2)
+    
+    with open(path, 'w', encoding='utf-8') as f: json.dump(stats, f, indent=2)
 
-    # Acumula o lucro caso o bot faça vários trades no mesmo dia
-    valor_atual = stats[month_key][report_date].get(estrategia, 0.0)
-    stats[month_key][report_date][estrategia] = round(valor_atual + profit, 2)
+def set_monthly_balance(balance, report_date=None):
+    path = os.path.join('data', 'monthly_stats.json')
+    stats = {}
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f: stats = json.load(f)
     
-    save_monthly_stats(stats)
+    report_date = report_date or date.today().isoformat()
+    month_key = report_date[:7]
+    if month_key not in stats: stats[month_key] = {}
+    stats[month_key]['balance'] = round(balance, 2)
+    
+    with open(path, 'w', encoding='utf-8') as f: json.dump(stats, f, indent=2)
 
 def get_daily_breakdown(report_date=None):
-    """Retorna quanto cada bot ganhou no dia específico."""
-    stats = load_monthly_stats()
-    if report_date is None:
-        report_date = date.today().isoformat()
+    """Retorna quanto cada bot ganhou no dia."""
+    path = os.path.join('data', 'monthly_stats.json')
+    stats = {}
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f: stats = json.load(f)
+    
+    report_date = report_date or date.today().isoformat()
     month_key = report_date[:7]
     return stats.get(month_key, {}).get(report_date, {})
 
 def get_monthly_accumulated_by_bot(month=None):
     """Retorna o acumulado do mês separado por bot."""
-    stats = load_monthly_stats()
-    if month is None:
-        month = date.today().isoformat()[:7]
+    path = os.path.join('data', 'monthly_stats.json')
+    stats = {}
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f: stats = json.load(f)
     
+    month = month or date.today().isoformat()[:7]
     month_data = stats.get(month, {})
     total_por_bot = {}
     
-    for dia_data in month_data.values():
-        if isinstance(dia_data, dict):  # Apenas processar entradas que são dicionários (ignorar 'balance')
+    for dia_key, dia_data in month_data.items():
+        if dia_key == 'balance': continue
+        if isinstance(dia_data, dict):
             for bot, lucro in dia_data.items():
-                total_por_bot[bot] = round(total_por_bot.get(bot, 0.0) + lucro, 2)
-            
+                bot_consolidado = mapear_estrategia(bot)
+                total_por_bot[bot_consolidado] = round(total_por_bot.get(bot_consolidado, 0.0) + lucro, 2)
+    
     return total_por_bot
 
-def set_monthly_balance(balance, report_date=None):
-    """
-    Salva o saldo mensal atual.
-    Estrutura: stats[mes]['balance'] = valor
-    """
-    stats = load_monthly_stats()
-    if report_date is None:
-        report_date = date.today().isoformat()
-    
-    month_key = report_date[:7]
-    
-    if month_key not in stats:
-        stats[month_key] = {}
-    
-    stats[month_key]['balance'] = round(balance, 2)
-    
-    save_monthly_stats(stats)
-
 def get_monthly_balance(month=None):
-    """Retorna o saldo mensal salvo."""
-    stats = load_monthly_stats()
-    if month is None:
-        month = date.today().isoformat()[:7]
+    """Retorna o saldo mensal."""
+    path = os.path.join('data', 'monthly_stats.json')
+    stats = {}
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f: stats = json.load(f)
     
+    month = month or date.today().isoformat()[:7]
     return stats.get(month, {}).get('balance', 0.0)

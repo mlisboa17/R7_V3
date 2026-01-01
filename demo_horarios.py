@@ -20,8 +20,8 @@ def demo_market_hours():
     operating = is_market_hours()
     status = "✅ DENTRO do horário" if operating else "❌ FORA do horário"
     print(f"Status de operação: {status}")
-    print(f"Horário de operação: 08:00 - 23:00 BRT")
-    print(f"Equivalente em UTC: 11:00 - 02:00 (dia seguinte)")
+    print(f"Horário de operação: 24/7 (Crypto nunca para)")
+    print(f"Equivalente em UTC: Sempre ativo")
     print()
 
 def demo_market_volatility():
@@ -33,7 +33,7 @@ def demo_market_volatility():
     multiplier = get_market_volatility_multiplier()
 
     print(f"Horário atual (UTC): {current_hour:02d}:00")
-    print(".1f")
+    print(f"Multiplicador de volatilidade: x{multiplier:.1f}")
 
     # Mostra os horários dos mercados
     markets = {
@@ -79,7 +79,7 @@ def demo_strategy_adjustments():
         tp = config["tp"]
         sl = config["sl"]
 
-        print("15")
+        print(f"{strategy:<15} | ${base_entry:>11.0f} | ${adjusted_entry:>15.0f} | {tp:>4.2f} | {sl:>4.2f}")
 
     print()
     print("💰 CONSIDERAÇÕES:")
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     demo_strategy_adjustments()
 
     print("✅ SISTEMA CONFIGURADO PARA:")
-    print("  • Operar apenas das 08:00 às 23:00 BRT (Brasília)")
+    print("  • Operar 24/7 (mercado crypto nunca para)")
     print("  • Ajustar entradas baseado na volatilidade dos mercados")
     print("  • Filtrar estratégias em períodos de baixa liquidez")
     print("  • Maximizar oportunidades quando mercados tradicionais estão ativos")

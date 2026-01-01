@@ -164,7 +164,7 @@ for trade in trades_log:
 
 # Calcular saldo total da composição
 composicao = get_account_composition()
-saldo_total = composicao.get('_total_usdt', sum(composicao.values()))
+saldo_total = composicao.get('_total_usdt', sum(item.get('usd_val', 0) for item in composicao.values() if isinstance(item, dict)))
 
 # 4. Interface - Sidebar
 st.sidebar.title("🎮 R7_V3 Control")

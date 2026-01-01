@@ -25,7 +25,7 @@ total_balance = estrategista.get_account_balance_usdt()
 
 if total_balance is not None:
     print()
-    print(f"✅ SALDO TOTAL ATUAL: ${total_balance:.2f} USDT")
+    print(f"✅ SALDO TOTAL ATUAL: ${total_balance:.2f} USDT (Meta Diária: $10.10)")
     print()
     print("Este valor inclui:")
     print("- Saldos spot de todos os ativos")
