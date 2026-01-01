@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  r7v3-bot:
+    build: .
+    container_name: r7v3-trading-bot
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - r7v3-network
+
+  r7v3-dashboard:
+    build: .
+    container_name: r7v3-dashboard
+    restart: unless-stopped
+    command: streamlit run dashboard_r7_v2.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - r7v3-network
+    depends_on:
+      - r7v3-bot
+
+  r7v3-web:
+    build: .
+    container_name: r7v3-web-interface
+    restart: unless-stopped
+    command: python web_dash.py
+    ports:
+      - "8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - r7v3-network
+    depends_on:
+      - r7v3-bot
+
+networks:
+  r7v3-network:
+    driver: bridge
+
+volumes:
+  logs:
+  data:
+  config:
