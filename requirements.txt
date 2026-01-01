@@ -1,0 +1,15 @@
+streamlit
+python-binance
+python-dotenv
+pandas
+matplotlib
+plotly
+streamlit-autorefresh
+python-telegram-bot
+transformers
+torch
+vaderSentiment
+ta
+asyncio
+pytz
+requests
