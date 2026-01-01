@@ -26,7 +26,7 @@ if not api_key or not api_secret:
 from tools.binance_wrapper import get_binance_client
 client = get_binance_client(api_key, api_secret)
 
-SALDO_INICIAL = 1743.12
+SALDO_INICIAL = 1870.00
 
 
 def convert_asset_to_usdt(asset, amount):

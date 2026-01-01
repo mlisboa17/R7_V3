@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import asyncio
 from datetime import datetime
 from utils.binance_retry import retry_api_call
 
@@ -16,71 +17,51 @@ class AccountMonitor:
         # Moedas que o R7_V3 monitora ativamente
         self.assets_of_interest = ['BTC', 'ETH', 'BNB', 'USDT', 'SOL', 'ADA', 'DOT', 'LINK', 'FET', 'RENDER', 'NEAR', 'AVAX', 'XRP']
 
+    async def monitor_loop(self):
+        """
+        Loop contínuo que atualiza a composição da conta a cada 30 segundos.
+        """
+        logger.info("🔄 Iniciando monitor contínuo de saldo (30s interval)")
+        while True:
+            try:
+                await self.atualizar_composicao()
+                await asyncio.sleep(30)  # Atualiza a cada 30 segundos
+            except Exception as e:
+                logger.error(f"Erro no loop de monitoramento: {e}")
+                await asyncio.sleep(10)  # Espera 10 segundos em caso de erro
+
     async def atualizar_composicao(self):
         try:
-            # Busca dados da conta com sistema de re-tentativa
-            acct = await retry_api_call(lambda: self.client.get_account())
-            balances = acct.get('balances', [])
-            
-            composition = {}
+            account_info = await self.client.get_account()
+            balances = account_info['balances']
+            nova_composicao = {}
             total_geral_usdt = 0.0
-            
-            # Busca preços de mercado para conversão
-            tickers = await retry_api_call(lambda: self.client.get_all_tickers())
-            price_map = {t['symbol']: float(t['price']) for t in tickers}
 
             for b in balances:
+                qty = float(b['free']) + float(b['locked'])
+                if qty <= 0: continue
+                
                 asset = b['asset']
-                free = float(b['free'])
-                locked = float(b['locked'])
-                total_qty = free + locked
+                if asset == 'USDT':
+                    valor_usd = qty
+                else:
+                    try:
+                        # Tenta pegar o preço atual da Binance
+                        ticker = await self.client.get_symbol_ticker(symbol=f"{asset}USDT")
+                        valor_usd = qty * float(ticker['price'])
+                    except:
+                        continue # Ignora moedas que não têm par USDT (como GIGGLE)
 
-                if total_qty > 0:
-                    # Converte o valor da moeda para USDT
-                    if asset == 'USDT':
-                        valor_usdt = total_qty
-                    else:
-                        pair = f"{asset}USDT"
-                        valor_usdt = total_qty * price_map.get(pair, 0.0)
+                if valor_usd > 1.0: # Só registra o que vale mais de 1 dólar
+                    nova_composicao[asset] = {"qty": qty, "usd_val": round(valor_usd, 2)}
+                    total_geral_usdt += valor_usd
 
-                    # Salva apenas o que tem valor relevante (> $0.10)
-                    if valor_usdt > 0.10 or asset in self.assets_of_interest:
-                        composition[asset] = {
-                            'qty': total_qty,
-                            'usd_val': round(valor_usdt, 2)
-                        }
-                        total_geral_usdt += valor_usdt
+            nova_composicao['_total_usdt'] = round(total_geral_usdt, 2)
+            nova_composicao['_timestamp'] = datetime.now().isoformat()
 
-            # Adiciona Simple Earn Flexible
-            # try:
-            #     earn_data = self.client.get_simple_earn_flexible_product_list()
-            #     for product in earn_data:
-            #         if product.get('status') == 'PURCHASING':
-            #             asset = product.get('asset')
-            #             totalAmount = float(product.get('totalAmount', 0))
-            #             if asset == 'USDT':
-            #                 total_geral_usdt += totalAmount
-            #                 composition['Earn/Staking'] = composition.get('Earn/Staking', 0) + totalAmount
-            #             else:
-            #                 pair = f"{asset}USDT"
-            #                 valor_usdt = totalAmount * price_map.get(pair, 0.0)
-            #                 total_geral_usdt += valor_usdt
-            #                 composition['Earn/Staking'] = composition.get('Earn/Staking', 0) + valor_usdt
-            # except Exception as e:
-            #     logger.warning(f"Não foi possível buscar dados de Simple Earn: {e}")
-
-            # Adiciona Metadados
-            composition['_total_usdt'] = round(total_geral_usdt, 2)
-            composition['_timestamp'] = datetime.now().isoformat()
-
-            # Garante que a pasta data existe e salva
-            os.makedirs('data', exist_ok=True)
-            with open(self.path, 'w', encoding='utf-8') as f:
-                json.dump(composition, f, indent=2)
-            
-            logger.info(f"📸 Snapshot de banca atualizado: ${total_geral_usdt:.2f}")
-            return composition
-
+            # GRAVAÇÃO DINÂMICA
+            with open('data/account_composition.json', 'w') as f:
+                json.dump(nova_composicao, f, indent=2)
+                
         except Exception as e:
-            logger.error(f"Erro ao atualizar monitor de ativos: {e}")
-            return None
+            logger.error(f"Erro ao atualizar saldo dinâmico: {e}")

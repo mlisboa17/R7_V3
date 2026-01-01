@@ -19,7 +19,7 @@ class GuardiaoBot:
         self.gestor = GestorFinanceiro(meta_diaria=config['config_geral'].get('meta_diaria_total_usdt', 23.11))
         
         # Parâmetros de Segurança
-        self.banca_referencia = config.get('banca_referencia_usdt', 1819.0)
+        self.banca_referencia = config.get('banca_referencia_usdt', 1870.00)
         self.exposicao_max = config['config_geral'].get('exposicao_maxima_usdt', 120.0)
         self.stop_loss_diario = -config['config_geral'].get('stop_loss_diario_usdt', 25.0)
         self.meta_diaria = self.gestor.meta_diaria

@@ -9,7 +9,7 @@ CHAT = os.getenv('TELEGRAM_CHAT_ID')
 
 async def send_activation():
     bot = Bot(token=TOKEN)
-    msg = '⚠️ MODO REAL ATIVADO! R7_V3 operando com Banca Inicial: $1743.12 USDT. Saldo operacional: $1743.12 USDT. Meta do dia: $17.43 USDT. Digite /status para o relatório.'
+    msg = '⚠️ MODO REAL ATIVADO! R7_V3 operando com Banca Inicial: $1870.00 USDT. Saldo operacional: $1870.00 USDT. Meta do dia: $18.70 USDT. Digite /status para o relatório.'
     try:
         await bot.send_message(chat_id=CHAT, text=msg)
         print('Mensagem enviada com sucesso')

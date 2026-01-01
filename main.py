@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 import json
-import pandas as pd # Importado para evitar NameError global
+import pandas as pd
 from dotenv import load_dotenv
 from binance import AsyncClient
 
@@ -24,22 +24,42 @@ logging.basicConfig(
 logger = logging.getLogger('R7_V3_MAIN')
 
 def load_config():
+    """Carrega configurações, corrige símbolos e permite informar preços de custo manuais."""
     path = os.path.join(os.path.dirname(__file__), 'config', 'settings.json')
+    
+    # Base de símbolos atualizada (POL e RENDER)
+    symbols = [
+        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
+        'ADAUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT', 
+        'AVAXUSDT', 'POLUSDT', 'LTCUSDT', 'NEARUSDT', 
+        'ATOMUSDT', 'FETUSDT', 'RENDERUSDT'
+    ]
+
+    # --- ÁREA DE CONFIGURAÇÃO MANUAL ---
+    # Informe aqui o preço que você pagou por moedas antigas que o bot deve gerenciar.
+    # Se deixar vazio {}, o bot tentará buscar sozinho na Binance.
+    precos_manuais = {
+        "SOLUSDT": 0.0,  # Exemplo: coloque 180.50 se comprou nesse valor
+        "BTCUSDT": 0.0,
+        "ETHUSDT": 0.0,
+        "GICLEUSDT": 68.35  # Preço de compra registrado
+    }
+
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            config = json.load(f)
+            config['config_geral']['symbols_monitorados'] = symbols
+            config['precos_custo'] = precos_manuais
+            return config
+            
     return {
-        "banca_referencia_usdt": 1827.00,
+        "banca_referencia_usdt": 1870.00, # Banca atualizada para 1870.00
+        "precos_custo": precos_manuais,
         "entrada_usd": 50.0,
         "config_geral": {
             "meta_diaria_total_usdt": 27.40,
             "exposicao_maxima_usdt": 600.0,
-            "symbols_monitorados": [
-                'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
-                'ADAUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT', 
-                'AVAXUSDT', 'MATICUSDT', 'LTCUSDT', 'NEARUSDT', 
-                'ATOMUSDT', 'FETUSDT', 'RNDRUSDT'
-            ]
+            "symbols_monitorados": symbols
         }
     }
 
@@ -49,10 +69,17 @@ async def iniciar_sistema():
     load_dotenv()
     config = load_config()
     
-    # 1. Conexão Assíncrona
+    # 1. Conexão Assíncrona com a Binance (com retry)
     api_key = os.getenv('BINANCE_API_KEY')
     api_secret = os.getenv('BINANCE_SECRET_KEY')
-    client = await AsyncClient.create(api_key, api_secret)
+    for i in range(3):
+        try:
+            client = await AsyncClient.create(api_key, api_secret)
+            break
+        except Exception as e:
+            if i == 2: raise e
+            logger.warning(f"⚠️ Falha na conexão (tentativa {i+1}/3). Reentando em 5s...")
+            await asyncio.sleep(5)
     
     try:
         # 2. Inicialização dos Módulos Base
@@ -60,26 +87,27 @@ async def iniciar_sistema():
         estrategista = EstrategistaBot(config)
         executor = ExecutorBot(config, monitor=monitor)
         
-        # 3. Inteligência Artificial: Carregamento Crítico
-        logger.info("🧠 IA: Treinando motor com 13.760 padrões...")
+        # Inicia a atualização contínua do saldo (a cada 30 segundos)
+        asyncio.create_task(monitor.monitor_loop())
+        
+        # 3. Inteligência Artificial: Treino inicial
+        logger.info("🧠 IA: Sincronizando motor com padrões de mercado...")
         await asyncio.to_thread(executor.ia.train)
         logger.info("✅ IA pronta para predições.")
 
-        # Registrar aporte inicial
-        executor.ia.registrar_movimento('APORTE', 325.00, 'Aporte inicial do sistema')
-        
-        # Registrar realocação
-        executor.ia.registrar_movimento("REALOCADA", 279.00, "Retirada de ADA para holding/Earn (3-12 meses)")
-
-        # 4. Inicialização do Analista com a IA já treinada
-        # PASSAGEM CIRÚRGICA: O Analista agora recebe o executor.ia
+        # 4. Inicialização do Analista
         analista = AnalistaBot(config, client=client, ia=executor.ia)
 
         # 5. Vínculos de Segurança
         estrategista.set_executor(executor)
         guardiao = GuardiaoBot(config, executor=executor)
 
-        # 6. Telegram
+        # 5.5. Gestão de Carteira Existente (SÓ VENDE COM LUCRO)
+        # Este método usa o 'precos_custo' acima ou consulta a Binance.
+        logger.info("🛡️ Assumindo carteira atual com critério de lucro de 1.5%...")
+        await executor.assumir_e_gerenciar_carteira()
+
+        # 6. Telegram (Comunicação)
         token = os.getenv('TELEGRAM_BOT_TOKEN')
         chat_id = os.getenv('TELEGRAM_CHAT_ID')
         if token and chat_id:
@@ -96,7 +124,7 @@ async def iniciar_sistema():
             symbols=symbols,
             ia=executor.ia,
             executor=executor,
-            analista=analista, # Agora o Sniper recebe o Analista completo com o método analisar_tick
+            analista=analista,
             guardiao=guardiao,
             estrategista=estrategista
         )
@@ -108,7 +136,10 @@ async def iniciar_sistema():
         logger.error(f"🚨 Erro Crítico no Main: {e}")
     finally:
         await client.close_connection()
-        logger.info("🔌 Conexão encerrada.")
+        logger.info("🔌 Conexão Binance encerrada.")
 
 if __name__ == "__main__":
-    asyncio.run(iniciar_sistema())
+    try:
+        asyncio.run(iniciar_sistema())
+    except KeyboardInterrupt:
+        logger.info("🛑 Sniper interrompido pelo usuário.")

@@ -2,6 +2,7 @@ import asyncio
 import os
 import logging
 import math
+import json
 from binance.exceptions import BinanceAPIException
 from utils.binance_retry import retry_api_call
 from ia_engine import IAEngine
@@ -27,6 +28,50 @@ class ExecutorBot:
     def start_sell_checker(self):
         if self._sell_checker_task is None or self._sell_checker_task.done():
             self._sell_checker_task = asyncio.create_task(self._global_sell_checker())
+
+    async def assumir_e_gerenciar_carteira(self):
+        """
+        Analisa ativos na carteira e só vende se estiverem no lucro de acordo com a estratégia.
+        """
+        logger.info("🛡️ Analisando ativos existentes para gestão estratégica de lucro...")
+        try:
+            account_info = await self.client.get_account()
+            balances = [b for b in account_info['balances'] if float(b['free']) > 0]
+
+            for asset_info in balances:
+                asset = asset_info['asset']
+                quantidade = float(asset_info['free'])
+
+                # Proteção para USDT (banca) e ADA (holding)
+                if asset in ['USDT', 'ADA'] or quantidade <= 0:
+                    continue
+
+                symbol = f"{asset}USDT"
+                try:
+                    # Busca a última compra para saber o preço médio
+                    trades = await self.client.get_my_trades(symbol=symbol, limit=1)
+                    if not trades:
+                        logger.warning(f"⚠️ Sem histórico de compra para {asset}. Mantendo na carteira por segurança.")
+                        continue
+                    
+                    preco_compra = float(trades[0]['price'])
+                    ticker = await self.client.get_symbol_ticker(symbol=symbol)
+                    preco_atual = float(ticker['price'])
+                    
+                    lucro_atual = ((preco_atual - preco_compra) / preco_compra) * 100
+
+                    # SÓ VENDE SE O LUCRO FOR >= 1.5%
+                    if lucro_atual >= 1.5:
+                        logger.warning(f"💰 {asset} atingiu a meta ({lucro_atual:.2f}%). Executando venda!")
+                        await self.client.order_market_sell(symbol=symbol, quantity=quantidade)
+                    else:
+                        logger.info(f"⏳ {asset}: Preço Compra: ${preco_compra} | Atual: ${preco_atual} | Lucro: {lucro_atual:.2f}%. (Mantendo)")
+
+                except Exception as e:
+                    logger.debug(f"ℹ️ {asset} não possui par USDT ou erro na consulta: {e}")
+
+        except Exception as e:
+            logger.error(f"🚨 Erro crítico na gestão de carteira: {e}")
 
     async def _global_sell_checker(self):
         while True:

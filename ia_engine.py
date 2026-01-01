@@ -14,7 +14,7 @@ from datetime import datetime
 from transformers import pipeline
 import warnings
 
-# Limpa avisos de depreciação do Pandas para manter o terminal profissional
+# Limpa avisos de depreciação do Pandas para manter o terminal limpo
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 logger = logging.getLogger('ia_engine')
@@ -25,7 +25,7 @@ class IAEngine:
         self.db_path = db_path
         self.analyzer = SentimentIntensityAnalyzer()
         
-        # Carregamento do FinBERT (Otimizado: apenas se necessário ou disponível)
+        # Carregamento do FinBERT (Otimizado)
         try:
             self.finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert", device=-1)
         except Exception as e:
@@ -49,34 +49,45 @@ class IAEngine:
 
     def registrar_movimento(self, tipo, valor, descricao):
         """
-        Registra movimentos financeiros: REALOCADA, APORTE ou RETIRADA.
-        Estes valores NÃO entram no cálculo de lucro/prejuízo diário (PnL).
+        Registra movimentos financeiros apenas após confirmação manual no console.
         """
         try:
+            print(f"\n⚠️ SOLICITAÇÃO DE REGISTRO FINANCEIRO:")
+            print(f"   - TIPO: {tipo.upper()}")
+            print(f"   - VALOR: ${valor:.2f}")
+            print(f"   - DESCRIÇÃO: {descricao}")
+
+            # Confirmação manual via teclado
+            confirmacao = input("Confirmar este registro no banco de dados? (s/n): ").strip().lower()
+
+            if confirmacao != 's':
+                logger.info(f"🚫 Registro de {tipo.upper()} cancelado pelo usuário.")
+                return False
+
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
-            # Insere o registro detalhado
+
+            # Inserção detalhada
             cursor.execute('''
                 INSERT INTO movimentacoes (tipo, valor, descricao)
                 VALUES (?, ?, ?)
             ''', (tipo.upper(), valor, descricao))
-            
-            # Se for APORTE ou RETIRADA/REALOCADA, atualizamos o saldo_final do dia 
-            # apenas para controle de banca, mas SEM mexer no lucro_liq.
+
+            # Atualização do saldo no daily_states
             hoje = datetime.now().date().isoformat()
             ajuste = valor if tipo.upper() == 'APORTE' else -valor
-            
+
             cursor.execute('''
-                UPDATE daily_states 
-                SET saldo_final = saldo_final + ? 
+                UPDATE daily_states
+                SET saldo_final = saldo_final + ?
                 WHERE data = ?
             ''', (ajuste, hoje))
-            
+
             conn.commit()
             conn.close()
-            logger.info(f"💾 Registrado: {tipo.upper()} - {valor} - {descricao}")
+            logger.info(f"💾 Confirmado e Registrado: {tipo.upper()} - {valor}")
             return True
+
         except Exception as e:
             logger.error(f"Erro ao registrar movimento: {e}")
             return False
@@ -84,6 +95,8 @@ class IAEngine:
     def create_tables(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        
+        # Tabela de análises técnicas
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS analises (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +109,8 @@ class IAEngine:
                 price_change_percent REAL, avg_price REAL, decision INTEGER, sucesso INTEGER
             )
         ''')
-        # Tabela de estados diários (resumo diário) - Adicionando campos novos
+
+        # Tabela de estados diários (Performance)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS daily_states (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,14 +128,14 @@ class IAEngine:
             )
         ''')
         
-        # Garantir que as colunas existam caso a tabela já tenha sido criada antes
+        # Migração: Garante colunas de aporte/saque em bancos antigos
         try:
             cursor.execute('ALTER TABLE daily_states ADD COLUMN aporte REAL DEFAULT 0;')
             cursor.execute('ALTER TABLE daily_states ADD COLUMN saque REAL DEFAULT 0;')
         except sqlite3.OperationalError:
-            pass  # As colunas já existem
+            pass 
             
-        # Tabela específica para Movimentações (Aporte, Retirada, Realocação)
+        # Tabela de Movimentações (Histórico de Aportes/Retiradas/Realocações)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS movimentacoes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,91 +145,82 @@ class IAEngine:
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
         conn.commit()
         conn.close()
 
-    def predict(self, data, symbol=None):
+    def get_historico_for_train(self):
         """
-        ASSINATURA UNIVERSAL: Aceita dicionário de features ou valor unitário.
-        Resolve o erro de 'positional arguments'.
+        Busca no SQLite as análises passadas com desfecho para treino.
         """
-        if self.model is None: return {"sinal": "WAIT", "confianca": 0.5}
-
         try:
-            # Se receber apenas o preço, cria um DF simplificado
-            if isinstance(data, (int, float)):
-                # Fallback: Se não temos todas as features, simulamos com o preço
-                # Para maior acurácia, o Analista deve enviar o dicionário completo
-                return {"sinal": "WAIT", "confianca": 0.5, "motivo": "Dados insuficientes"}
+            conn = sqlite3.connect(self.db_path)
+            df = pd.read_sql_query('SELECT * FROM analises WHERE sucesso IS NOT NULL', conn)
+            conn.close()
+            return df
+        except Exception as e:
+            logger.error(f"Erro ao buscar histórico no DB: {e}")
+            return pd.DataFrame()
 
-            # Se receber o dicionário completo (comportamento padrão do AnalistaBot)
+    def predict(self, data, symbol=None):
+        """Assinatura Universal: Previne erro de argumentos."""
+        if self.model is None: return {"sinal": "WAIT", "confianca": 0.5}
+        try:
+            if isinstance(data, (int, float)):
+                return {"sinal": "WAIT", "confianca": 0.5, "motivo": "Dados brutos"}
+
             df = pd.DataFrame([data])
-            
-            # Garante que as colunas estão na ordem correta do treino
             features_cols = ['close', 'rsi', 'volume', 'ema20', 'ema200', 'bb_upper', 'bb_lower', 
                              'price_above_ema', 'trend_4h', 'buy_pressure', 'volume_24h', 
                              'fear_greed', 'news_sentiment', 'whale_risk', 'price_change_percent', 'avg_price']
             
-            # Preenche colunas faltantes com 0 para não quebrar o modelo
             for col in features_cols:
                 if col not in df.columns: df[col] = 0
             
             X = df[features_cols]
             prob = self.model.predict_proba(X)[0][1]
             sinal = "BUY" if prob >= 0.85 else "WAIT"
-
             return {"sinal": sinal, "confianca": prob}
-            
         except Exception as e:
-            logger.error(f"Erro na predição IA: {e}")
+            logger.error(f"Erro na predição: {e}")
             return {"sinal": "WAIT", "confianca": 0.0}
 
     async def analisar_tick(self, symbol, preco_atual, buffer_precos):
-        """
-        MOTOR SNIPER: Integrado com o WebSocket.
-        """
+        """Análise em tempo real via WebSocket."""
         try:
             if len(buffer_precos) < 20:
                 return {"decisao": "AGUARDAR", "estrategia": "none", "forca": 0}
 
-            # Prepara dados rápidos do buffer
             df = pd.DataFrame(list(buffer_precos), columns=['close'])
             df['close'] = df['close'].astype(float)
             df['rsi'] = ta.rsi(df['close'], length=14)
             df['ema20'] = ta.ema(df['close'], length=20)
             
             last = df.iloc[-1]
-            
-            # Dicionário de features para o predict
             feat = {
                 'close': preco_atual,
                 'rsi': last['rsi'],
                 'ema20': last['ema20'],
-                'price_above_ema': 1 if preco_atual > last['ema20'] else 0,
-                # Outras features podem ser zeradas se não disponíveis no tick
+                'price_above_ema': 1 if preco_atual > last['ema20'] else 0
             }
 
             res = self.predict(feat)
-
             if res['sinal'] == "BUY":
-                # Lógica de moedas
                 if any(x in symbol for x in ['BTC', 'ETH', 'BNB']):
                     est, forca = "scalping_v6", 1.5
-                elif any(x in symbol for x in ['SOL', 'AVAX', 'NEAR', 'FET', 'RNDR']):
+                elif any(x in symbol for x in ['SOL', 'AVAX', 'NEAR', 'FET', 'RENDER']):
                     est, forca = "momentum_boost", 1.2
                 else:
                     est, forca = "swing_rwa", 1.0
-                
                 return {"decisao": "COMPRAR", "estrategia": est, "forca": forca, "confianca": res['confianca']}
             
             return {"decisao": "AGUARDAR", "estrategia": "none", "forca": 0}
-
         except Exception as e:
-            logger.error(f"Erro no Analisar Tick IA: {e}")
+            logger.error(f"Erro no analisar_tick: {e}")
             return {"decisao": "AGUARDAR", "estrategia": "none", "forca": 0}
 
     def train(self):
-        """Treino blindado contra colunas vazias."""
+        """Treina a IA com dados do DB e CSV."""
         try:
             df_db = self.get_historico_for_train()
             df_csv = pd.read_csv('data/historico_ia.csv') if os.path.exists('data/historico_ia.csv') else pd.DataFrame()

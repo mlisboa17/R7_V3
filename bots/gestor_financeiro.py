@@ -21,9 +21,9 @@ class GestorFinanceiro:
         """Carrega dados e verifica se o dia mudou para processar o fechamento."""
         hoje = date.today().isoformat()
         default_stats = {
-            "saldo_inicial_geral": 1827.96,
-            "saldo_inicial_mes": 1827.96,
-            "saldo_inicial_dia": 1827.96,
+            "saldo_inicial_geral": 1870.00,
+            "saldo_inicial_mes": 1870.00,
+            "saldo_inicial_dia": 1870.00,
             "lucro_acumulado_dia": 0.0,
             "trades_hoje": 0,
             "wins_hoje": 0,
@@ -53,7 +53,7 @@ class GestorFinanceiro:
         hoje = date.today().isoformat()
         
         lucro_final_ontem = round(self.dados.get("lucro_acumulado_dia", 0.0), 2)
-        saldo_ini_ontem = self.dados.get("saldo_inicial_dia", 1827.96)
+        saldo_ini_ontem = self.dados.get("saldo_inicial_dia", 1870.00)
 
         # 1. Salva no Histórico Mensal (JSON)
         set_monthly_balance(saldo_fechamento_real, report_date=ontem)

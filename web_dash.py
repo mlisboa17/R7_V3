@@ -142,7 +142,7 @@ for dia, strats in stats_mes.items():
             strategies_mes[strat] = strategies_mes.get(strat, 0.0) + lucro
 
 # Valores reais do daily_state
-saldo_real = daily_state.get('spot_usdt', 1743.12)
+saldo_real = daily_state.get('spot_usdt', 1870.00)
 lucro_dia_real = daily_state.get('lucro_acumulado_usdt', 0.0)
 meta_diaria = daily_state.get('meta_diaria_usdt', 17.43)
 trades_hoje = daily_state.get('trades_today', 0)

@@ -91,19 +91,19 @@ candidates.sort(key=lambda x: x[4])
 print('Candidate minimal sells:', candidates[:10])
 
 collected = 0.0
-    for asset, symbol, free, qty, expected in candidates:
+for asset, symbol, free, qty, expected in candidates:
     if collected >= need:
         break
     try:
         print('Trying sell', symbol, 'qty', qty)
-            res = c.create_order(symbol=symbol, side='SELL', type='MARKET', quantity=str(qty))
-            fills = res.get('fills') or []
-            rec = 0.0
-            if fills:
-                for f in fills:
-                    rec += float(f.get('qty', 0)) * float(f.get('price', 0)) if f.get('price') else 0
-            if not rec:
-                rec = float(res.get('cummulativeQuoteQty') or 0)
+        res = c.create_order(symbol=symbol, side='SELL', type='MARKET', quantity=str(qty))
+        fills = res.get('fills') or []
+        rec = 0.0
+        if fills:
+            for f in fills:
+                rec += float(f.get('qty', 0)) * float(f.get('price', 0)) if f.get('price') else 0
+        if not rec:
+            rec = float(res.get('cummulativeQuoteQty') or 0)
         collected += rec
         with open('logs/trades.log','a',encoding='utf-8') as f:
             f.write(f"{__import__('datetime').datetime.utcnow().isoformat()} | SELL_MIN_TOPUP | {symbol} | qty={qty} | received_usdt={rec}\n")
