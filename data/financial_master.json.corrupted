@@ -1,0 +1,68 @@
+{
+    "_versao": "2.0_MASTER",
+    "_descricao": "NAO SOBRESCREVER - Arquivo MASTER consolidado",
+    "_ultima_atualizacao": "2026-01-04T00:00:00",
+    "_WARNING": "Este arquivo usa estrutura MASTER - nao usar estrutura antiga",
+    "saldos": {
+        "saldo_inicial_dia": 2155.73,
+        "saldo_spot": 1531.56,
+        "saldo_earn": 328.83,
+        "saldo_cripto": 295.34,
+        "saldo_atual": 2155.73
+    },
+    "lucros": {
+        "lucro_acumulado_dia": 0.0,
+        "lucro_acumulado_mes": 0.0,
+        "lucro_acumulado_geral": 0.0
+    },
+    "metas": {
+        "meta_diaria": 30.0,
+        "status_meta_dia": "caçando",
+        "progresso_pct": 0.0,
+        "meta_batida": false
+    },
+    "estatisticas_mes": {
+        "total_trades": 0,
+        "trades_win": 0,
+        "trades_loss": 0,
+        "win_rate": 0.0,
+        "maior_ganho": 0.0,
+        "maior_perda": 0.0
+    },
+    "historico_diario": {
+        "2026-01-03": {
+            "saldo_inicial": 2155.73,
+            "saldo_spot": 1531.56,
+            "saldo_earn": 328.83,
+            "saldo_cripto": 295.34,
+            "lucro_do_dia": 0.0,
+            "trades": 0,
+            "meta_diaria": 30.0,
+            "meta_batida": false
+        }
+    },
+    "dias": {
+        "2026-01-03": {
+            "saldo_inicial": 2155.73,
+            "saldo_spot": 1531.56,
+            "saldo_earn": 328.83,
+            "saldo_cripto": 295.34,
+            "lucro_do_dia": 0.0,
+            "trades": 0,
+            "meta_diaria": 30.0,
+            "meta_batida": false
+        },
+        "2026-01-04": {
+            "saldo_inicial": 1796.63918771,
+            "saldo_spot": 1418.99531771,
+            "saldo_earn": 0.0,
+            "saldo_cripto": 298.28,
+            "lucro_do_dia": -79.36,
+            "trades": 0
+        }
+    },
+    "lucro_acumulado_mes": 0.0,
+    "trades_realizados_mes": 0,
+    "_version": "1.0"
+}": "1.0"
+}

@@ -1,0 +1,49 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+import joblib # Para salvar o modelo
+import os
+
+def treinar_inteligencia_r7():
+    print("🧠 Lendo o Dataset Elite...")
+    if not os.path.exists('data/historico_ia_completo.csv'):
+        print("❌ Erro: Arquivo CSV não encontrado. Gere os dados primeiro!")
+        return
+
+    df = pd.read_csv('data/historico_ia_completo.csv')
+
+    # 1. Preparação dos Dados (Features)
+    # Selecionamos o que a IA vai olhar para decidir
+    X = df[['rsi', 'ema20', 'atr_pct', 'rel_vol']]
+    
+    # O que queremos prever (0 = Vende / 1 = Renova Contrato)
+    y = df['sucesso']
+
+    # 2. Divisão de Treino e Teste
+    # Usamos 80% para ensinar e 20% para testar se ela aprendeu mesmo
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    print(f"🚀 Treinando Random Forest com {len(X_train)} exemplos...")
+
+    # 3. Criando o Modelo (A Floresta)
+    # n_estimators=100 significa 100 árvores decidindo juntas
+    modelo = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
+    modelo.fit(X_train, y_train)
+
+    # 4. Avaliação de Honestidade
+    previsoes = modelo.predict(X_test)
+    acerto = accuracy_score(y_test, previsoes)
+    
+    print("\n--- RESULTADO DO TREINAMENTO ---")
+    print(f"✅ Precisão Geral: {acerto * 100:.2f}%")
+    print("\nRelatório Detalhado:")
+    print(classification_report(y_test, previsoes))
+
+    # 5. Salvando o Cérebro
+    os.makedirs('models', exist_ok=True)
+    joblib.dump(modelo, 'models/cerebro_r7_v3.pkl')
+    print("\n💾 Modelo salvo com sucesso em 'models/cerebro_r7_v3.pkl'")
+
+if __name__ == "__main__":
+    treinar_inteligencia_r7()

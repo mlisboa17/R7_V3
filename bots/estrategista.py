@@ -1,243 +1,142 @@
 import logging
 import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../tools')))
-from convert_to_stable import converter_lucro_para_stable
+import asyncio
+from datetime import datetime
+
+# Importações de ferramentas e utilitários
 from .gestor_financeiro import GestorFinanceiro
-import numpy as np
-import sys
-sys.path.append('..')
 from utils.volatility import calculate_volatility
+from tools.convert_to_stable import converter_lucro_para_stable
 
 logger = logging.getLogger('estrategista')
-
 
 class EstrategistaBot:
     def __init__(self, config):
         self.config = config
         self.open_positions = set()
         self.executor = None
-        # Sabedoria: Meta fixa diária de 1% sobre os $2020
-        # `GestorFinanceiro` aceita opcionalmente o saldo inicial do mês; usa meta interna fixa
         self.gestor = GestorFinanceiro()
+        self.trava_dia_encerrado = False
+        
+        # --- NOVO: Configurações de Meta vindas do settings.json ---
+        self.meta_target = config.get('config_geral', {}).get('meta_diaria_total_usdt', 25.0)
+        self.banca_ref = config.get('banca_referencia_usdt', 1870.00)
 
     def set_executor(self, executor):
+        """Conecta o executor para permitir vendas automáticas."""
         self.executor = executor
 
-    def iniciar_dia_trading(self):
-        """Snapshot para o Dashboard e reset de metas diárias."""
-        # Usa a banca de referência do config se disponível
-        banca = self.config.get('banca_referencia_usdt', 2020.00) if isinstance(self.config, dict) else 2020.00
-        self.gestor.registrar_inicio_dia(banca)
-        logger.info(f"Dia iniciado. Meta: ${self.gestor.meta_diaria_fixa}")
+    async def iniciar_dia_trading(self):
+        """Reset diário e snapshot da banca."""
+        await asyncio.to_thread(self.gestor.registrar_inicio_dia, self.banca_ref)
+        self.trava_dia_encerrado = False
+        # Zera estado de lucro local para cálculo percentual
+        self._lucro_hoje_cache = 0.0
+        logger.info(f"🌅 Ciclo Iniciado | Meta: ${self.meta_target} | Banca Ref: ${self.banca_ref}")
 
-    def analisar_tendencia(self, sinal):
+    async def analisar_tendencia(self, symbol, preco_atual):
         """
-        Permite operar até 1,5% de lucro diário, mas para se recuar para 0,8% após ultrapassar 1%.
+        Analisa se o sistema ainda pode operar baseado no lucro do dia.
+        Usa percentuais relativos à `banca_ref` para tomada de decisão.
         """
-        status = self.gestor.status_atual()
-        saldo_inicial = status.get('saldo_inicial', 1710.36)
-        lucro_dia = status.get('lucro_hoje', 0.0)
-        meta_1pct = saldo_inicial * 0.01
-        meta_1_5pct = saldo_inicial * 0.015
-        meta_0_8pct = saldo_inicial * 0.008
-
-        # Se já estiver posicionado na mesma moeda, ignora
-        if sinal.get('symbol') in self.open_positions:
+        if self.trava_dia_encerrado:
             return False
 
+        # Consulta status real do gestor financeiro (retorna lucro em USDT)
+        status = await asyncio.to_thread(self.gestor.status_atual)
+        lucro_hoje = status.get('lucro_hoje', 0.0)
+        self._lucro_hoje_cache = lucro_hoje
+        
+        # Log do status de meta para debug
+        meta_batida = status.get('meta_batida', False)
+        progresso = status.get('progresso_pct', 0.0)
+        logger.info(f"📊 Status Meta | Lucro: ${lucro_hoje:.2f} | Meta: ${status.get('meta_diaria', 25.0):.2f} | Progresso: {progresso:.1f}% | Batida: {meta_batida}")
 
-        # Se nunca atingiu 1% ainda, segue a meta padrão
-        if lucro_dia < meta_1pct:
-            return True
+        # Calcula lucro em percentagem sobre a banca de referência
+        try:
+            lucro_pct = (lucro_hoje / float(self.banca_ref)) * 100.0
+        except Exception:
+            lucro_pct = 0.0
 
-        # Se atingiu 1% mas não chegou a 1,5%, pergunta ao usuário se deseja vender
-        if meta_1pct <= lucro_dia < meta_1_5pct:
-            if not hasattr(self, '_perguntou_meta') or not self._perguntou_meta:
-                from datetime import datetime
-                if datetime.now().date().isoformat() == '2025-12-29':
-                    self._perguntou_meta = True
-                    if self.executor and hasattr(self.executor, 'comunicador') and self.executor.comunicador:
-                        try:
-                            from tools.analise_carteira import analisar_carteira_e_sugerir
-                            api_key = os.getenv('BINANCE_API_KEY')
-                            secret = os.getenv('BINANCE_SECRET_KEY')
-                            total_usdt, total_lucro, sugestoes, acao = analisar_carteira_e_sugerir(api_key, secret)
-                            sugestoes_str = '\n'.join(sugestoes)
-                            # Identifica moedas com lucro relevante
-                            moedas_vender = []
-                            for s in sugestoes:
-                                if 'lucro de $' in s and float(s.split('lucro de $')[1].split(' ')[0]) > 0:
-                                    moedas_vender.append(s.split(':')[0])
-                            if moedas_vender:
-                                sugestao_criteriosa = f"Sugestão: vender as moedas {', '.join(moedas_vender)}."
-                            else:
-                                sugestao_criteriosa = "Nenhuma moeda com lucro relevante para venda imediata."
-                        except Exception as e:
-                            sugestoes_str = 'Não foi possível analisar a carteira.'
-                            acao = ''
-                            sugestao_criteriosa = ''
-                        lucro_super_meta = meta_1_5pct
-                        lucro_faltante = lucro_super_meta - lucro_dia
-                        status_mercado = 'POSITIVO' if lucro_dia > 0 else 'NEGATIVO'
-                        opcoes = (
-                            "1️⃣ Vender apenas as moedas sugeridas",
-                            "2️⃣ Vender toda a carteira",
-                            "3️⃣ Esperar até a super meta de 1,5%",
-                            "4️⃣ Não fazer nada hoje"
-                        )
-                        msg = (
-                            f"Meta diária de 1% atingida!\n"
-                            f"Lucro do dia: ${lucro_dia:.2f} USDT.\n"
-                            f"Prefere tentar a super meta de 1,5%? Se atingir, o lucro será ${lucro_super_meta:.2f} USDT (faltam ${lucro_faltante:.2f}).\n"
-                            f"Status do mercado hoje: {status_mercado}.\n"
-                            f"\n{sugestao_criteriosa}\nResumo da carteira:\n{sugestoes_str}\n{acao}\n"
-                            f"\nEscolha uma opção:\n" + '\n'.join(opcoes)
-                        )
-                        try:
-                            import asyncio
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                asyncio.create_task(self.executor.comunicador._enviar(msg))
-                            else:
-                                loop.run_until_complete(self.executor.comunicador._enviar(msg))
-                        except Exception as e:
-                            logger.error(f'Erro ao enviar mensagem Telegram: {e}')
-                else:
-                    self._perguntou_meta = True
-                    if self.executor and hasattr(self.executor, 'comunicador') and self.executor.comunicador:
-                        # Comportamento padrão dos outros dias
-                        try:
-                            from tools.analise_carteira import analisar_carteira_e_sugerir
-                            api_key = os.getenv('BINANCE_API_KEY')
-                            secret = os.getenv('BINANCE_SECRET_KEY')
-                            total_usdt, total_lucro, sugestoes, acao = analisar_carteira_e_sugerir(api_key, secret)
-                            sugestoes_str = '\n'.join(sugestoes)
-                        except Exception as e:
-                            sugestoes_str = 'Não foi possível analisar a carteira.'
-                            acao = ''
-                        lucro_super_meta = meta_1_5pct
-                        lucro_faltante = lucro_super_meta - lucro_dia
-                        status_mercado = 'POSITIVO' if lucro_dia > 0 else 'NEGATIVO'
-                        msg = (
-                            f"Meta diária de 1% atingida!\n"
-                            f"Lucro do dia: ${lucro_dia:.2f} USDT.\n"
-                            f"Prefere tentar a super meta de 1,5%? Se atingir, o lucro será ${lucro_super_meta:.2f} USDT (faltam ${lucro_faltante:.2f}).\n"
-                            f"Status do mercado hoje: {status_mercado}.\n"
-                            f"\nResumo da carteira:\n{sugestoes_str}\n{acao}\n"
-                            f"Deseja vender e encerrar o dia? Responda SIM para vender ou NÃO para continuar até a super meta."
-                        )
-                        try:
-                            import asyncio
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                asyncio.create_task(self.executor.comunicador._enviar(msg))
-                            else:
-                                loop.run_until_complete(self.executor.comunicador._enviar(msg))
-                        except Exception as e:
-                            logger.error(f'Erro ao enviar mensagem Telegram: {e}')
-                    try:
-                        import asyncio
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(self.executor.comunicador._enviar(msg))
-                        else:
-                            loop.run_until_complete(self.executor.comunicador._enviar(msg))
-                    except Exception as e:
-                        logger.error(f'Erro ao enviar mensagem Telegram: {e}')
-            # Checa resposta do usuário
-            if hasattr(self, '_resposta_meta'):
-                if str(self._resposta_meta).strip().upper() == 'SIM':
-                    try:
-                        api_key = os.getenv('BINANCE_API_KEY')
-                        secret = os.getenv('BINANCE_SECRET_KEY')
-                        converter_lucro_para_stable(api_key, secret)
-                        logger.info('Lucro convertido para USDT após resposta SIM na meta de 1%.')
-                        if self.executor and hasattr(self.executor, 'comunicador') and self.executor.comunicador:
-                            msg = 'Venda realizada e dia encerrado conforme solicitado.'
-                            import asyncio
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                asyncio.create_task(self.executor.comunicador._enviar(msg))
-                            else:
-                                loop.run_until_complete(self.executor.comunicador._enviar(msg))
-                    except Exception as e:
-                        logger.error(f'Erro ao converter lucro para USDT: {e}')
-                    return False
-                elif str(self._resposta_meta).strip().upper() == 'NAO' or str(self._resposta_meta).strip().upper() == 'NÃO':
-                    return True
-            return False  # Aguarda resposta
+        # Limiares em percentuais - DESATIVADOS para bot nunca parar
+        # meta_super_pct = 1.5   # 1.5%
+        # meta_segura_pct = 1.0  # 1.0%
+        # trava_recuo_pct = 0.8  # 0.8%
 
-        # Se já atingiu 1% e recuou para 0,8% ou menos, para tudo
-        if lucro_dia <= meta_0_8pct:
-            return False
+        # 1. BLOQUEIO: Meta Super Atingida - DESATIVADO
+        # if lucro_pct >= meta_super_pct:
+        #     await self.finalizar_e_converter(f"Super Meta Batida: {lucro_pct:.2f}% (${lucro_hoje:.2f})")
+        #     return False
 
-        # Se já atingiu 1,5%, vende tudo automaticamente sem perguntar
-        if lucro_dia >= meta_1_5pct:
-            try:
-                api_key = os.getenv('BINANCE_API_KEY')
-                secret = os.getenv('BINANCE_SECRET_KEY')
-                from tools.convert_to_stable import converter_lucro_para_stable
-                converter_lucro_para_stable(api_key, secret)
-                logger.info('Lucro convertido para USDT automaticamente ao bater 1,5% (super meta)')
-                # Envia mensagem para o Telegram
-                if self.executor and hasattr(self.executor, 'comunicador') and self.executor.comunicador:
-                    msg = 'Meta diária de 1,5% (super meta) atingida! Todas as criptos foram vendidas automaticamente.'
-                    import asyncio
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.create_task(self.executor.comunicador._enviar(msg))
-                    else:
-                        loop.run_until_complete(self.executor.comunicador._enviar(msg))
-            except Exception as e:
-                logger.error(f'Erro ao converter lucro para USDT: {e}')
-                # Aviso no Telegram
-                try:
-                    if self.executor and hasattr(self.executor, 'comunicador') and self.executor.comunicador:
-                        import asyncio
-                        loop = asyncio.get_event_loop()
-                        msg = 'Falha na venda automática ao atingir a super meta. Favor realizar manualmente. As trades só serão retomadas amanhã.'
-                        if loop.is_running():
-                            asyncio.create_task(self.executor.comunicador._enviar(msg))
-                        else:
-                            loop.run_until_complete(self.executor.comunicador._enviar(msg))
-                except Exception as e2:
-                    logger.error(f'Erro ao enviar aviso Telegram: {e2}')
-                return False
+        # 2. PROTEÇÃO DE LUCRO - DESATIVADA
+        # if lucro_pct >= trava_recuo_pct and lucro_pct < meta_segura_pct:
+        #     await self.finalizar_e_converter(f"Proteção de Lucro Ativada: {lucro_pct:.2f}% (${lucro_hoje:.2f})")
+        #     return False
+
+        # 3. VERIFICAÇÃO DE DUPLICIDADE
+        if symbol in self.open_positions:
             return False
 
         return True
 
-    def calcular_position_size(self, prices, saldo, risco_pct=0.01, window=14):
-        """
-        Calcula o tamanho da posição baseado na volatilidade (desvio padrão).
-        - prices: lista de preços de fechamento recentes
-        - saldo: saldo disponível
-        - risco_pct: percentual do saldo a arriscar por trade
-        - window: janela de volatilidade
-        """
-        vol = calculate_volatility(prices, window=window, method='std')
-        if vol == 0:
-            return 0
-        valor_risco = saldo * risco_pct
-        size = valor_risco / vol
-        return max(0, int(size))
+    async def finalizar_e_converter(self, motivo):
+        """Ação de encerramento total e proteção em Stablecoin."""
+        if self.trava_dia_encerrado: return
+        
+        self.trava_dia_encerrado = True
+        logger.info(f"🛑 [FINALIZANDO DIA] Motivo: {motivo}")
+        
+        try:
+            # 1. Tenta converter via ferramenta externa
+            api_key = os.getenv('BINANCE_API_KEY')
+            secret = os.getenv('BINANCE_SECRET_KEY')
+            await asyncio.to_thread(converter_lucro_para_stable, api_key, secret)
+            
+            # 2. Envia relatório para o Telegram
+            if self.executor and self.executor.comunicador:
+                msg = f"🏆 *R7_V3 Sniper Encerrado*\n🎯 Motivo: {motivo}\n💰 Saldo Protegido em USDT."
+                await self.executor.comunicador._enviar(msg)
+        except Exception as e:
+            logger.error(f"Falha na conversão automática: {e}")
 
-    def definir_stops(self, preco_entrada, prices, mult=2, window=14):
-        """
-        Define stop-loss e take-profit automáticos baseados na volatilidade.
-        - mult: multiplicador da volatilidade para o stop
-        """
-        vol = calculate_volatility(prices, window=window, method='std')
-        stop_loss = preco_entrada - mult * vol
-        take_profit = preco_entrada + mult * vol
-        return stop_loss, take_profit
+    # --- MÉTODOS DE APOIO AO SNIPER ---
+
+    def registrar_pnl(self, pair, pnl_liquido, estrategia):
+        """Callback do Executor: Registra PnL de cada trade fechado."""
+        logger.info(f"📈 {pair} | PnL: ${pnl_liquido:.2f} | Estratégia: {estrategia}")
+        # Delega para o gestor financeiro rastrear lucros por estratégia
+        try:
+            asyncio.create_task(self._registrar_pnl_async(pair, pnl_liquido, estrategia))
+        except Exception as e:
+            logger.error(f"Erro ao registrar PnL: {e}")
+
+    async def _registrar_pnl_async(self, pair, pnl_liquido, estrategia):
+        """Versão async para registrar PnL e rastrear por estratégia."""
+        # 1. Atualiza PnL geral
+        await asyncio.to_thread(
+            self.gestor.atualizar_pnl_trade, 
+            pnl_liquido
+        )
+        # 2. Rastreia PnL por estratégia (BOT)
+        from bots.monthly_stats import add_profit_by_strategy
+        await asyncio.to_thread(
+            add_profit_by_strategy,
+            pnl_liquido,
+            estrategia
+        )
 
     def mark_position_open(self, symbol):
         self.open_positions.add(symbol)
 
-    def mark_position_closed(self, symbol, pnl):
+    async def mark_position_closed(self, symbol, pnl):
+        """Libera a moeda para novos trades e atualiza o financeiro."""
         if symbol in self.open_positions:
             self.open_positions.remove(symbol)
-            # Atualiza o lucro no gestor para controle de meta
-            self.gestor.atualizar_lucro(pnl)
+        # Atualiza o gestor para que o próximo tick já leia o lucro novo
+        await asyncio.to_thread(self.gestor.atualizar_pnl_trade, pnl)
+
+    async def calcular_position_size(self, prices, saldo, risco_pct=0.01):
+        """Calcula lote baseado na volatilidade real do ativo."""
+        vol = await asyncio.to_thread(calculate_volatility, prices)
+        if vol <= 0: return 0
+        return max(0, (saldo * risco_pct) / vol)

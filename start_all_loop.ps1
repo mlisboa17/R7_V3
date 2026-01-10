@@ -1,3 +1,6 @@
+# Define o título da janela do PowerShell
+$Host.UI.RawUI.WindowTitle = "R7_V3"
+
 # Consolida histórico de trades diariamente às 02:00
 Start-Job -ScriptBlock {
     $python = "python"
